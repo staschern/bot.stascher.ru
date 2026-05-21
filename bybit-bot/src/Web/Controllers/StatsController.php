@@ -260,6 +260,87 @@ final class StatsController
     }
 
     /**
+     * v0.9.1: POST /stats/set-deposit — ручная установка начального баланса периода.
+     *
+     * Body (JSON или form): mode, account_id (optional int), period_type (week|month),
+     *                       period_start (YYYY-MM-DD), deposit_usdt (float)
+     */
+    public function setDeposit(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $params = (array)$request->getParsedBody();
+        if (empty($params)) {
+            $body = (string)$request->getBody();
+            $params = (array)json_decode($body, true);
+        }
+        try {
+            $mode        = trim((string)($params['mode']        ?? ''));
+            $periodType  = trim((string)($params['period_type'] ?? ''));
+            $periodStart = trim((string)($params['period_start'] ?? ''));
+            $depositRaw  = $params['deposit_usdt'] ?? '';
+            $accountRaw  = $params['account_id'] ?? null;
+
+            if (!in_array($mode, ['paper', 'testnet', 'live'], true)) {
+                throw new \RuntimeException('mode должен быть paper|testnet|live');
+            }
+            if (!in_array($periodType, ['week', 'month'], true)) {
+                throw new \RuntimeException('period_type должен быть week|month');
+            }
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodStart)) {
+                throw new \RuntimeException('period_start должен быть YYYY-MM-DD');
+            }
+            $depositUsdt = (float)str_replace(',', '.', (string)$depositRaw);
+            if ($depositUsdt <= 0) {
+                throw new \RuntimeException('deposit_usdt должен быть > 0');
+            }
+            $accountId = ($accountRaw !== null && $accountRaw !== '') ? (int)$accountRaw : null;
+
+            $ok = EquitySnapshotsService::saveSnapshot(
+                $mode, $accountId, $periodType, $periodStart, $depositUsdt, 'manual', true
+            );
+            EventRecorder::event(EventRecorder::INFO, 'equity_snapshot_manual_set', null, [
+                'mode'         => $mode,
+                'account_id'   => $accountId,
+                'period_type'  => $periodType,
+                'period_start' => $periodStart,
+                'deposit_usdt' => $depositUsdt,
+            ]);
+            $payload = ['ok' => true, 'saved' => $ok, 'deposit_usdt' => $depositUsdt];
+        } catch (\Throwable $e) {
+            Logger::get()->error('stats set_deposit failed: ' . $e->getMessage());
+            $payload = ['ok' => false, 'error' => $e->getMessage()];
+        }
+        $response->getBody()->write(json_encode($payload, JSON_UNESCAPED_UNICODE));
+        return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
+    }
+
+    /**
+     * v0.9.1: POST /stats/save-current-snapshots — принудительное сохранение
+     * снапшота ТЕКУЩЕГО периода (неделя + месяц) по всем режимам/аккаунтам.
+     * Не дожидаясь cron_daily. Перезаписывает существующее (force=true).
+     */
+    public function saveCurrentSnapshots(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        try {
+            $res = EquitySnapshotsService::snapshotNow();
+            Logger::get()->info('stats save_current_snapshots ok', [
+                'written' => $res['written'] ?? 0,
+            ]);
+            EventRecorder::event(EventRecorder::INFO, 'equity_snapshots_current_saved', null, [
+                'written' => (int)($res['written'] ?? 0),
+            ]);
+            $payload = [
+                'ok'      => true,
+                'written' => (int)($res['written'] ?? 0),
+            ];
+        } catch (\Throwable $e) {
+            Logger::get()->error('stats save_current_snapshots failed: ' . $e->getMessage());
+            $payload = ['ok' => false, 'error' => $e->getMessage()];
+        }
+        $response->getBody()->write(json_encode($payload, JSON_UNESCAPED_UNICODE));
+        return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
+    }
+
+    /**
      * v0.9.0-step9 task4: POST /stats/backfill-snapshots — пересчёт equity_snapshots
      * ретроспективно из истории закрытых trades. Идемпотентно (force=true).
      */

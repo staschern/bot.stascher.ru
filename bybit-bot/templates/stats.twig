@@ -40,6 +40,22 @@
 
     .mode-filter { font-size:12px; margin-bottom:10px; }
     .mode-filter select { background:#1a1a1a; color:#e0e0e0; border:1px solid #333; padding:3px 6px; }
+
+    /* v0.9.1: inline deposit editor */
+    .dep-cell { white-space:nowrap; }
+    .dep-val { cursor:pointer; border-bottom:1px dashed #446; }
+    .dep-val:hover { color:#9bd; }
+    .dep-edit-wrap { display:none; margin-top:4px; }
+    .dep-edit-wrap.open { display:flex; gap:4px; align-items:center; }
+    .dep-edit-wrap input[type=number] {
+        width:90px; padding:2px 4px; font-size:11px;
+        background:#111; border:1px solid #446; color:#e0e0e0; border-radius:3px;
+    }
+    .dep-save-btn { font-size:11px; padding:2px 6px; background:#1a3a5a; color:#9bd;
+        border:1px solid #3a6a9a; border-radius:3px; cursor:pointer; }
+    .dep-save-btn:hover { background:#204060; }
+    .dep-cancel-btn { font-size:11px; padding:2px 4px; background:#2a2a2a; color:#779;
+        border:1px solid #444; border-radius:3px; cursor:pointer; }
 </style>
 {% endblock %}
 {% block body %}
@@ -80,13 +96,21 @@
             </select>
         </label>
         <span style="color:#666;margin-left:10px;">D0 = {{ d0|number_format(2) }} USDT</span>
+        {# v0.9.1: обновить снапшот текущего периода #}
+        <button type="button" id="btn-save-current-snapshots"
+                style="margin-left:14px;background:#1a2a1a;color:#8d8;border:1px solid #353;
+                       padding:3px 10px;cursor:pointer;font-size:12px;"
+                title="Сохранить текущий баланс как начальный депозит для текущей недели и месяца (не ждать cron_daily)">
+            Обновить снапшот
+        </button>
         {# v0.9.0-step9 task4 #}
         <button type="button" id="btn-backfill-snapshots"
-                style="margin-left:14px;background:#1a1a1a;color:#9bd;border:1px solid #335;
-                       padding:3px 10px;cursor:pointer;font-size:12px;">
+                style="margin-left:6px;background:#1a1a1a;color:#9bd;border:1px solid #335;
+                       padding:3px 10px;cursor:pointer;font-size:12px;"
+                title="Полный пересчёт всех equity_snapshots из истории сделок">
             Пересчитать snapshots
         </button>
-        <span id="backfill-status" style="color:#779;margin-left:8px;font-size:11px;"></span>
+        <span id="snapshot-status" style="color:#779;margin-left:8px;font-size:11px;"></span>
     </form>
 
     {# ── Итого за всё время ── #}
@@ -155,7 +179,24 @@
                 {% for r in weekly %}
                 <tr>
                     <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
-                    <td>{% if r.deposit_start_available %}{{ r.deposit_start|number_format(2) }}{% else %}<span style="color:#555;">—</span>{% endif %}</td>
+                    <td class="dep-cell"
+                        data-mode="{{ filter_mode }}"
+                        data-account="{{ filter_account ?? '' }}"
+                        data-period-type="week"
+                        data-period-start="{{ r.period_start_mon }}">
+                        {% if r.deposit_start_available %}
+                            <span class="dep-val" title="Нажмите, чтобы изменить вручную">{{ r.deposit_start|number_format(2) }}</span>
+                        {% else %}
+                            <span class="dep-val" title="Нажмите, чтобы задать вручную" style="color:#555;">—</span>
+                        {% endif %}
+                        <div class="dep-edit-wrap">
+                            <input type="number" step="0.01" min="0.01"
+                                   value="{{ r.deposit_start_available ? r.deposit_start : '' }}"
+                                   placeholder="USDT">
+                            <button class="dep-save-btn">Сохранить</button>
+                            <button class="dep-cancel-btn">✕</button>
+                        </div>
+                    </td>
                     <td>{{ r.trades_count }}</td>
                     <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
                     {% set wr = r.win_rate %}
@@ -197,7 +238,24 @@
                 {% for r in monthly %}
                 <tr>
                     <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
-                    <td>{% if r.deposit_start_available %}{{ r.deposit_start|number_format(2) }}{% else %}<span style="color:#555;">—</span>{% endif %}</td>
+                    <td class="dep-cell"
+                        data-mode="{{ filter_mode }}"
+                        data-account="{{ filter_account ?? '' }}"
+                        data-period-type="month"
+                        data-period-start="{{ r.period_start_first }}">
+                        {% if r.deposit_start_available %}
+                            <span class="dep-val" title="Нажмите, чтобы изменить вручную">{{ r.deposit_start|number_format(2) }}</span>
+                        {% else %}
+                            <span class="dep-val" title="Нажмите, чтобы задать вручную" style="color:#555;">—</span>
+                        {% endif %}
+                        <div class="dep-edit-wrap">
+                            <input type="number" step="0.01" min="0.01"
+                                   value="{{ r.deposit_start_available ? r.deposit_start : '' }}"
+                                   placeholder="USDT">
+                            <button class="dep-save-btn">Сохранить</button>
+                            <button class="dep-cancel-btn">✕</button>
+                        </div>
+                    </td>
                     <td>{{ r.trades_count }}</td>
                     <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
                     {% set wr = r.win_rate %}
@@ -224,25 +282,116 @@
 </main>
 <script>
 (function(){
-    var btn = document.getElementById('btn-backfill-snapshots');
-    var stat = document.getElementById('backfill-status');
-    if (!btn) return;
-    btn.addEventListener('click', function(){
-        if (!confirm('Пересчитать snapshots из истории сделок? Это перезапишет все записи equity_snapshots.')) return;
-        btn.disabled = true;
-        stat.textContent = 'Работаю…';
-        fetch('/stats/backfill-snapshots', {method:'POST', credentials:'same-origin'})
-            .then(function(r){ return r.json(); })
-            .then(function(j){
-                if (j && j.ok) {
-                    stat.textContent = 'ОК, записано: ' + (j.written|0);
-                    setTimeout(function(){ location.reload(); }, 800);
-                } else {
-                    stat.textContent = 'Ошибка: ' + (j && j.error ? j.error : 'unknown');
-                }
-            })
-            .catch(function(e){ stat.textContent = 'Ошибка: ' + e; })
-            .finally(function(){ btn.disabled = false; });
+    var snapStatus = document.getElementById('snapshot-status');
+
+    function postJson(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        }).then(function(r){ return r.json(); });
+    }
+
+    function setStatus(msg, color) {
+        if (snapStatus) { snapStatus.textContent = msg; snapStatus.style.color = color || '#779'; }
+    }
+
+    // ── Обновить снапшот текущего периода ──
+    var btnCurrent = document.getElementById('btn-save-current-snapshots');
+    if (btnCurrent) {
+        btnCurrent.addEventListener('click', function(){
+            btnCurrent.disabled = true;
+            setStatus('Сохраняю…', '#aaa');
+            postJson('/stats/save-current-snapshots', {})
+                .then(function(j){
+                    if (j && j.ok) {
+                        setStatus('ОК, обновлено: ' + (j.written|0), '#8d8');
+                        setTimeout(function(){ location.reload(); }, 700);
+                    } else {
+                        setStatus('Ошибка: ' + (j && j.error ? j.error : 'unknown'), '#f88');
+                        btnCurrent.disabled = false;
+                    }
+                })
+                .catch(function(e){ setStatus('Ошибка: ' + e, '#f88'); btnCurrent.disabled = false; });
+        });
+    }
+
+    // ── Полный пересчёт snapshots ──
+    var btnBackfill = document.getElementById('btn-backfill-snapshots');
+    if (btnBackfill) {
+        btnBackfill.addEventListener('click', function(){
+            if (!confirm('Пересчитать snapshots из истории сделок? Это перезапишет все записи equity_snapshots.')) return;
+            btnBackfill.disabled = true;
+            setStatus('Работаю…', '#aaa');
+            postJson('/stats/backfill-snapshots', {})
+                .then(function(j){
+                    if (j && j.ok) {
+                        setStatus('ОК, записано: ' + (j.written|0), '#9bd');
+                        setTimeout(function(){ location.reload(); }, 800);
+                    } else {
+                        setStatus('Ошибка: ' + (j && j.error ? j.error : 'unknown'), '#f88');
+                        btnBackfill.disabled = false;
+                    }
+                })
+                .catch(function(e){ setStatus('Ошибка: ' + e, '#f88'); btnBackfill.disabled = false; });
+        });
+    }
+
+    // ── Инлайн-редактирование начального депозита ──
+    document.querySelectorAll('.dep-cell').forEach(function(cell){
+        var valSpan  = cell.querySelector('.dep-val');
+        var editWrap = cell.querySelector('.dep-edit-wrap');
+        var input    = cell.querySelector('input[type=number]');
+        var saveBtn  = cell.querySelector('.dep-save-btn');
+        var cancelBtn= cell.querySelector('.dep-cancel-btn');
+        if (!valSpan || !editWrap) return;
+
+        valSpan.addEventListener('click', function(){
+            editWrap.classList.add('open');
+            if (input) input.focus();
+        });
+
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function(){
+                editWrap.classList.remove('open');
+            });
+        }
+
+        if (saveBtn && input) {
+            saveBtn.addEventListener('click', function(){
+                var val = parseFloat(input.value);
+                if (!val || val <= 0) { input.style.borderColor = '#f66'; return; }
+                input.style.borderColor = '';
+                saveBtn.disabled = true;
+                saveBtn.textContent = '…';
+                var payload = {
+                    mode:         cell.dataset.mode,
+                    account_id:   cell.dataset.account || null,
+                    period_type:  cell.dataset.periodType,
+                    period_start: cell.dataset.periodStart,
+                    deposit_usdt: val
+                };
+                postJson('/stats/set-deposit', payload)
+                    .then(function(j){
+                        if (j && j.ok) {
+                            valSpan.textContent = val.toFixed(2);
+                            editWrap.classList.remove('open');
+                            setStatus('Баланс обновлён → ' + val.toFixed(2) + ' USDT', '#8d8');
+                            setTimeout(function(){ location.reload(); }, 600);
+                        } else {
+                            setStatus('Ошибка: ' + (j && j.error ? j.error : 'unknown'), '#f88');
+                            saveBtn.disabled = false;
+                            saveBtn.textContent = 'Сохранить';
+                        }
+                    })
+                    .catch(function(e){
+                        setStatus('Ошибка: ' + e, '#f88');
+                        saveBtn.disabled = false;
+                        saveBtn.textContent = 'Сохранить';
+                    });
+            });
+        }
     });
 })();
 </script>

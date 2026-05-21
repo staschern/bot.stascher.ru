@@ -382,8 +382,8 @@ function monitorPendingConditionals(\PDO $pdo): void
             )->execute([':tid' => $tradeId]);
 
             $pdo->prepare(
-                "UPDATE trades SET status = 'CANCELLED' WHERE id = :id AND status = 'PENDING_CONDITIONAL'"
-            )->execute([':id' => $tradeId]);
+                "UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id AND status = 'PENDING_CONDITIONAL'"
+            )->execute([':now' => $now, ':id' => $tradeId]);
 
             $eventKind = ($cancelReason === 'recovered_pair')
                 ? 'pending_cancel_recovered_pair'

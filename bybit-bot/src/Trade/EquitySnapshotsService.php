@@ -267,6 +267,57 @@ final class EquitySnapshotsService
     }
 
     /**
+     * Принудительное сохранение снапшота текущего периода (v0.9.1).
+     *
+     * Аналог snapshotDaily(), но с force=true — перезаписывает существующее значение.
+     * Используется кнопкой «Обновить снапшот» на /stats, чтобы не ждать cron_daily.
+     *
+     * @return array{written:int, skipped:int}
+     */
+    public static function snapshotNow(): array
+    {
+        $modes = ['paper', 'testnet', 'live'];
+        $weekStart  = self::mondayOf(gmdate('Y-m-d'));
+        $monthStart = self::firstOfMonth(gmdate('Y-m-d'));
+
+        $written = 0;
+        $skipped = 0;
+
+        foreach ($modes as $mode) {
+            $depAgg = self::currentWallet($mode, null);
+            if (is_finite($depAgg)) {
+                foreach (['week' => $weekStart, 'month' => $monthStart] as $pt => $ps) {
+                    if (self::saveSnapshot($mode, null, $pt, $ps, $depAgg, 'manual_refresh', true)) {
+                        $written++;
+                    } else {
+                        $skipped++;
+                    }
+                }
+            }
+            if ($mode !== 'paper') {
+                try {
+                    $accounts = BybitAccountsRepo::getEnabledForNetwork($mode);
+                } catch (\Throwable $e) {
+                    $accounts = [];
+                }
+                foreach ($accounts as $a) {
+                    $aid  = (int)$a['id'];
+                    $depA = self::currentWallet($mode, $aid);
+                    if (!is_finite($depA)) { continue; }
+                    foreach (['week' => $weekStart, 'month' => $monthStart] as $pt => $ps) {
+                        if (self::saveSnapshot($mode, $aid, $pt, $ps, $depA, 'manual_refresh', true)) {
+                            $written++;
+                        } else {
+                            $skipped++;
+                        }
+                    }
+                }
+            }
+        }
+        return ['written' => $written, 'skipped' => $skipped];
+    }
+
+    /**
      * Ежедневный snapshot (вызывается из cron_daily на 00:00 UTC).
      * Сохраняем:
      *   - week-snapshot на понедельник текущей недели (UTC) — если ещё нет;

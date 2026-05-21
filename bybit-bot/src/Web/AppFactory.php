@@ -110,6 +110,9 @@ final class AppFactory
             // v0.9.0-step9 task4: backfill equity_snapshots
             $group->post('/stats/backfill-snapshots', [StatsController::class, 'backfillSnapshots'])
                   ->setName('stats_backfill_snapshots');
+            // v0.9.1: ручной ввод начального баланса и обновление снапшота текущего периода
+            $group->post('/stats/set-deposit',             [StatsController::class, 'setDeposit'])->setName('stats_set_deposit');
+            $group->post('/stats/save-current-snapshots',  [StatsController::class, 'saveCurrentSnapshots'])->setName('stats_save_current_snapshots');
 
             // Events history (v0.7.6)
             $group->get('/events', [EventsController::class, 'index'])->setName('events');

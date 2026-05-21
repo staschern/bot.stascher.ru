@@ -1089,8 +1089,8 @@ final class BybitAdapter implements ExchangeAdapter
         // В любом случае помечаем trade как CANCELLED локально (биржа могла уже сама
         // закрыть/исполнить ордер; статус сверится при reconcile).
         $pdo->prepare(
-            "UPDATE trades SET status = 'CANCELLED' WHERE id = :id"
-        )->execute([':id' => $tradeId]);
+            "UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id"
+        )->execute([':now' => $now, ':id' => $tradeId]);
 
         $pdo->prepare(
             "UPDATE orders SET status = 'cancelled', cancelled_at = :now

@@ -1283,14 +1283,15 @@ final class PaperAdapter implements ExchangeAdapter
             }
 
             if ($shouldCancel) {
+                $cancelNow = self::nowIso();
                 $pdo->prepare(
-                    "UPDATE trades SET status = 'CANCELLED' WHERE id = :id"
-                )->execute([':id' => $tradeId]);
+                    "UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id"
+                )->execute([':now' => $cancelNow, ':id' => $tradeId]);
 
                 $pdo->prepare(
                     "UPDATE orders SET status = 'cancelled', cancelled_at = :now
                      WHERE trade_id = :tid AND exchange = 'paper' AND status IN ('placed','pending')"
-                )->execute([':tid' => $tradeId, ':now' => self::nowIso()]);
+                )->execute([':tid' => $tradeId, ':now' => $cancelNow]);
 
                 $pdo->prepare(
                     "UPDATE paper_orders SET status = 'cancelled' WHERE trade_id = :tid AND status = 'pending'"
@@ -1372,8 +1373,8 @@ final class PaperAdapter implements ExchangeAdapter
         $now = self::nowIso();
 
         $pdo->prepare(
-            "UPDATE trades SET status = 'CANCELLED' WHERE id = :id"
-        )->execute([':id' => $tradeId]);
+            "UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id"
+        )->execute([':now' => $now, ':id' => $tradeId]);
 
         $pdo->prepare(
             "UPDATE orders SET status = 'cancelled', cancelled_at = :now
