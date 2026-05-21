@@ -17,6 +17,7 @@ use BybitBot\Guards\MaxTotalOrdersGuard;
 use BybitBot\Guards\MinLotOvershootGuard;
 use BybitBot\Guards\SignalUpperCapGuard;
 use BybitBot\Signals\Decisions;
+use BybitBot\Core\BybitAccountsRepo;
 use BybitBot\Strategies\StrategyInterface;
 
 /**
@@ -535,14 +536,35 @@ final class Strategy1 implements StrategyInterface
         }
 
         // §6.3: trailing
-        // movement_coef = наименьшее k ≥ 0 такое, что 2^k ≥ p; если p < 2 → k=1
-        $movementCoef = 1;
-        if ($p >= 2.0) {
-            $k = 0;
-            while (pow(2.0, $k) < $p) {
-                $k++;
+        // movement_coef зависит от risk_mode аккаунта (v0.9.1):
+        //   conservative: 2^k — наименьшее k ≥ 0 такое, что 2^k ≥ p (если p < 2 → k=1).
+        //                 Даёт жёсткий (близкий) триггер и тугой трейл.
+        //   standard:     floor(p/4)+1 — шкала по четвёркам, более мягкий трейл.
+        $accId    = isset($trade['account_id']) && $trade['account_id'] !== null ? (int)$trade['account_id'] : null;
+        $riskMode = BybitAccountsRepo::RISK_CONSERVATIVE;
+        if ($accId !== null) {
+            $accRow = BybitAccountsRepo::find($accId);
+            if ($accRow !== null) {
+                $riskMode = (string)($accRow['risk_mode'] ?? BybitAccountsRepo::RISK_CONSERVATIVE);
             }
-            $movementCoef = (int)pow(2, $k);
+        }
+
+        if ($riskMode === BybitAccountsRepo::RISK_STANDARD) {
+            // Стандарт: floor(p/4)+1
+            $movementCoef = (int)floor($p / 4.0) + 1;
+            if ($movementCoef < 1) {
+                $movementCoef = 1;
+            }
+        } else {
+            // Консервативный: 2^k
+            $movementCoef = 1;
+            if ($p >= 2.0) {
+                $k = 0;
+                while (pow(2.0, $k) < $p) {
+                    $k++;
+                }
+                $movementCoef = (int)pow(2, $k);
+            }
         }
 
         $trailingPct      = Rounding::floorToTenth($p / (float)$movementCoef - 0.3);
@@ -654,14 +676,18 @@ final class Strategy1 implements StrategyInterface
             'trigger_price'  => $triggerPrice,
             'avg_price'      => $avgPrice,
             'avg_qty'        => $avgQty,
+            'risk_mode'      => $riskMode,
+            'movement_coef'  => $movementCoef,
         ]);
 
         Logger::get()->info("s1: onPositionOpened для trade #{$tradeId}", [
-            'symbol'       => $symbol,
-            'entry_real'   => $pReal,
-            'sl_real'      => $slReal,
-            'trailing_pct' => $trailingPct,
-            'avg_price'    => $avgPrice,
+            'symbol'        => $symbol,
+            'entry_real'    => $pReal,
+            'sl_real'       => $slReal,
+            'trailing_pct'  => $trailingPct,
+            'avg_price'     => $avgPrice,
+            'risk_mode'     => $riskMode,
+            'movement_coef' => $movementCoef,
         ]);
     }
 

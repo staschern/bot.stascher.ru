@@ -149,6 +149,8 @@ final class AppFactory
             $group->post('/accounts/{id}/toggle',           [BybitAccountsController::class, 'toggle'])->setName('accounts_toggle');
             // v0.9.0-step7 task5: per-strategy toggle (s1/s2/s3)
             $group->post('/accounts/{id}/toggle-strategy/{strat}', [BybitAccountsController::class, 'toggleStrategy'])->setName('accounts_toggle_strategy');
+            // v0.9.1: режим риска (conservative|standard) — формула движения trailing §6.3
+            $group->post('/accounts/{id}/set-risk-mode',    [BybitAccountsController::class, 'setRiskMode'])->setName('accounts_set_risk_mode');
             $group->post('/accounts/{id}/archive',          [BybitAccountsController::class, 'archive'])->setName('accounts_archive');
             $group->post('/accounts/{id}/test',             [BybitAccountsController::class, 'test'])->setName('accounts_test');
 

@@ -58,6 +58,13 @@
     .strat-btn.on  { background:#1a3a1a; color:#6aff6a; border-color:#2a5a2a; }
     .strat-btn.off { background:#2a1a1a; color:#aa6a6a; border-color:#5a2a2a; }
     .strat-btn:hover { filter:brightness(1.25); }
+    /* v0.9.1: risk mode toggle */
+    .risk-select { font-size:11px; padding:2px 6px; border-radius:3px; cursor:pointer;
+        border:1px solid #444; background:#1a1a1a; color:#e0e0e0; }
+    .risk-btn { font-size:11px; padding:2px 6px; border-radius:3px; cursor:pointer;
+        border:1px solid #444; }
+    .risk-conservative { background:#1a2a3a; color:#80b0e0; border-color:#2a4a6a; }
+    .risk-standard     { background:#2a1a3a; color:#c080e0; border-color:#5a2a6a; }
 </style>
 {% endblock %}
 {% block body %}
@@ -96,6 +103,7 @@
             <th>Network</th>
             <th>Включён</th>
             <th title="По каждой стратегии отдельно: вкл/выкл участия в fan-out сигналов">Стратегии</th>
+            <th title="Режим расчёта trailing stop §6.3: Консервативный (2^k) или Стандарт (floor(p/4)+1)">Риск</th>
             <th>API key</th>
             <th>Открытых позиций</th>
             <th style="width:260px;">Действия</th>
@@ -128,6 +136,17 @@
                         </button>
                     </form>
                 {% endfor %}
+            </td>
+            {# v0.9.1: risk mode selector #}
+            <td>
+                {% set rm = a.risk_mode is defined ? a.risk_mode : 'conservative' %}
+                <form method="POST" action="/accounts/{{ a.id }}/set-risk-mode" style="display:inline-flex;gap:4px;align-items:center;">
+                    <select name="risk_mode" class="risk-select" onchange="this.form.submit()"
+                            title="Консервативный: movement_coef = 2^k (жёсткий трейл)&#10;Стандарт: movement_coef = floor(p/4)+1 (мягкий трейл, меньше преждевременных закрытий)">
+                        <option value="conservative" {{ rm == 'conservative' ? 'selected' }}>Консервативный</option>
+                        <option value="standard"     {{ rm == 'standard'     ? 'selected' }}>Стандарт</option>
+                    </select>
+                </form>
             </td>
             <td class="mono">
                 {% if a.keys_configured %}

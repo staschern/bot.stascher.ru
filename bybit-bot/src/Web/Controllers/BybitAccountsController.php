@@ -218,6 +218,31 @@ final class BybitAccountsController
         return $this->redirect($response, $flash);
     }
 
+    /**
+     * v0.9.1: установить режим риска аккаунта (conservative|standard).
+     * POST /accounts/{id}/set-risk-mode
+     */
+    public function setRiskMode(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        $id     = (int)($args['id'] ?? 0);
+        $params = (array)$request->getParsedBody();
+        $mode   = trim((string)($params['risk_mode'] ?? ''));
+        $flash  = '';
+        try {
+            $acc = BybitAccountsRepo::find($id);
+            if ($acc === null) throw new \RuntimeException("Аккаунт #{$id} не найден");
+            BybitAccountsRepo::setRiskMode($id, $mode);
+            $label = $mode === BybitAccountsRepo::RISK_STANDARD ? 'Стандарт' : 'Консервативный';
+            EventRecorder::event(EventRecorder::INFO, 'bybit_account_risk_mode_changed', null, [
+                'account_id' => $id, 'name' => $acc['name'], 'risk_mode' => $mode,
+            ]);
+            $flash = "OK|Аккаунт '{$acc['name']}' — режим риска: {$label}.";
+        } catch (\Throwable $e) {
+            $flash = 'ERR|' . $e->getMessage();
+        }
+        return $this->redirect($response, $flash);
+    }
+
     public function archive(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $id = (int)($args['id'] ?? 0);

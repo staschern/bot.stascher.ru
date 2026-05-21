@@ -22,6 +22,7 @@ declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
 \BybitBot\Core\Bootstrap::init(__DIR__ . '/..');
 
+use BybitBot\Core\BybitAccountsRepo;
 use BybitBot\Core\Database;
 use BybitBot\Core\EventRecorder;
 use BybitBot\Core\Config;
@@ -93,12 +94,24 @@ $slReal    = $isLong
     ? Rounding::roundToStep($slRealRaw, $tickSize, Rounding::UP)
     : Rounding::roundToStep($slRealRaw, $tickSize, Rounding::DOWN);
 
-// §6.3 trailing
-$movementCoef = 1;
-if ($p >= 2.0) {
-    $k = 0;
-    while (pow(2.0, $k) < $p) { $k++; }
-    $movementCoef = (int)pow(2, $k);
+// §6.3 trailing — movement_coef по risk_mode аккаунта (v0.9.1)
+$riskMode = BybitAccountsRepo::RISK_CONSERVATIVE;
+if ($accId !== null) {
+    $accRow = BybitAccountsRepo::find($accId);
+    if ($accRow !== null) {
+        $riskMode = (string)($accRow['risk_mode'] ?? BybitAccountsRepo::RISK_CONSERVATIVE);
+    }
+}
+if ($riskMode === BybitAccountsRepo::RISK_STANDARD) {
+    $movementCoef = (int)floor($p / 4.0) + 1;
+    if ($movementCoef < 1) { $movementCoef = 1; }
+} else {
+    $movementCoef = 1;
+    if ($p >= 2.0) {
+        $k = 0;
+        while (pow(2.0, $k) < $p) { $k++; }
+        $movementCoef = (int)pow(2, $k);
+    }
 }
 $trailingPct     = max(0.1, Rounding::floorToTenth($p / (float)$movementCoef - 0.3));
 $triggerRaw      = $pReal + ($pReal * $sign * ($p / (float)$movementCoef)) / 100.0;
@@ -125,7 +138,7 @@ $avgQCur   = (float)($t['qty_avg'] ?? 0);
 
 $accLabel = $accId !== null ? " acc=#{$accId}" : '';
 echo "─── trade #{$tradeId} {$symbol} {$side} (status={$status}, ex={$exchange}{$accLabel}) ───\n";
-echo "entry_real={$pReal} p={$p} qty={$qty} market_coef={$marketCoef}\n\n";
+echo "entry_real={$pReal} p={$p} qty={$qty} market_coef={$marketCoef} risk_mode={$riskMode} movement_coef={$movementCoef}\n\n";
 echo "Field              current → target\n";
 printf("  sl_current       %-12s → %s\n", $slCur, $slReal);
 printf("  trailing_pct     %-12s → %s\n", $tpctCur, $trailingPct);
@@ -187,6 +200,8 @@ if ($ok) {
         'trigger_price'  => $triggerPrice,
         'avg_price'      => $avgPrice,
         'avg_qty'        => $avgQty,
+        'risk_mode'      => $riskMode,
+        'movement_coef'  => $movementCoef,
     ]);
     echo "  SL принят биржей: {$slReal}\n";
 } else {

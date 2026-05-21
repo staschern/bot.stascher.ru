@@ -26,6 +26,9 @@ final class BybitAccountsRepo
     public const NETWORK_LIVE    = 'live';
     public const NETWORK_TESTNET = 'testnet';
 
+    public const RISK_CONSERVATIVE = 'conservative';
+    public const RISK_STANDARD     = 'standard';
+
     /**
      * @return array<int,array<string,mixed>>
      */
@@ -99,6 +102,25 @@ final class BybitAccountsRepo
      *
      * @param string $strategyId 's1'|'s2'|'s3'
      */
+    /**
+     * Установить режим риска для аккаунта (v0.9.1).
+     * Влияет на формулу movement_coef в §6.3 (trailing stop).
+     */
+    public static function setRiskMode(int $id, string $riskMode): void
+    {
+        if (!in_array($riskMode, [self::RISK_CONSERVATIVE, self::RISK_STANDARD], true)) {
+            throw new RuntimeException("risk_mode должен быть 'conservative' или 'standard'");
+        }
+        $stmt = Database::pdo()->prepare(
+            'UPDATE bybit_accounts SET risk_mode = :rm, updated_at = :u WHERE id = :id'
+        );
+        $stmt->execute([
+            ':rm' => $riskMode,
+            ':u'  => gmdate('Y-m-d\\TH:i:s\\Z'),
+            ':id' => $id,
+        ]);
+    }
+
     public static function setStrategyEnabled(int $id, string $strategyId, bool $enabled): void
     {
         $col = self::strategyColumn($strategyId);
@@ -293,6 +315,8 @@ final class BybitAccountsRepo
             's1_enabled'   => array_key_exists('s1_enabled', $row) ? ((int)$row['s1_enabled']) === 1 : true,
             's2_enabled'   => array_key_exists('s2_enabled', $row) ? ((int)$row['s2_enabled']) === 1 : true,
             's3_enabled'   => array_key_exists('s3_enabled', $row) ? ((int)$row['s3_enabled']) === 1 : true,
+            // v0.9.1: risk_mode — консервативный (2^k) или стандарт (floor(p/4)+1). Дефолт = conservative.
+            'risk_mode'    => array_key_exists('risk_mode', $row) ? (string)$row['risk_mode'] : self::RISK_CONSERVATIVE,
             'api_key_mask' => (string)($row['api_key_mask'] ?? ''),
             'archived_at'  => $row['archived_at'] !== null ? (string)$row['archived_at'] : null,
             'created_at'   => (string)$row['created_at'],
