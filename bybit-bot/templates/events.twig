@@ -1,0 +1,245 @@
+{% extends "_layout.twig" %}
+{% block title %}История событий — Bybit Futures Bot{% endblock %}
+{% block head %}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    nav a.active { color:#6a9eff; font-weight:600; }
+
+    .source-tabs { display:flex; gap:0; border-bottom:1px solid #333; margin-bottom:16px; }
+    .source-tabs a {
+        padding:8px 18px; color:#aab; text-decoration:none; font-size:13px;
+        border-bottom:2px solid transparent; margin-bottom:-1px;
+    }
+    .source-tabs a:hover { color:#fff; }
+    .source-tabs a.active { color:#6a9eff; border-bottom-color:#6a9eff; font-weight:600; }
+
+    .filters { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
+    .filters .f-group { display:flex; flex-direction:column; gap:3px; }
+    .filters label { font-size:11px; color:#889; }
+    .filters input, .filters select {
+        background:#1a1a1a; border:1px solid #444; color:#e0e0e0;
+        padding:5px 8px; border-radius:3px; font-size:12px; min-width:120px;
+    }
+    .filters input:focus, .filters select:focus { border-color:#6a9eff; outline:none; }
+
+    .btn { padding:6px 14px; border:none; border-radius:3px; cursor:pointer; font-size:12px; }
+    .btn-primary { background:#2d5da8; color:#fff; }
+    .btn-primary:hover { background:#3668bf; }
+    .btn-secondary { background:#444; color:#ccc; }
+    .btn-secondary:hover { background:#555; }
+
+    table.events { width:100%; border-collapse:collapse; font-size:12px; }
+    table.events thead tr { border-bottom:1px solid #333; color:#889; text-align:left; }
+    table.events th, table.events td { padding:6px 8px; vertical-align:top; }
+    table.events tbody tr { border-bottom:1px solid #2a2a2a; cursor:pointer; }
+    table.events tbody tr:hover { background:#1a1a1a; }
+    table.events tbody tr.expanded { background:#181c24; }
+
+    .lvl-INFO     { color:#8fc88f; }
+    .lvl-WARN     { color:#e0c373; }
+    .lvl-ERROR    { color:#e07373; }
+    .lvl-CRITICAL { color:#ff5050; font-weight:600; }
+
+    .kind { color:#6a9eff; font-family:monospace; }
+    .symbol { font-family:monospace; color:#ec9; }
+    .trade-id { font-family:monospace; color:#7a9; font-size:11px; }
+    .ts        { font-family:monospace; font-size:11px; color:#e0c373; white-space:nowrap; }
+    .ts .sec   { color:#789; }
+
+    .payload-row { display:none; background:#0e1218; }
+    .payload-row.show { display:table-row; }
+    .payload-row pre {
+        margin:0; padding:10px 16px; color:#cde; font-size:11px;
+        white-space:pre-wrap; word-break:break-all; max-height:400px; overflow:auto;
+    }
+
+    .pagination { display:flex; gap:8px; justify-content:center; align-items:center; margin-top:16px; font-size:12px; color:#889; }
+    .pagination a { color:#6a9eff; text-decoration:none; padding:4px 10px; border:1px solid #333; border-radius:3px; }
+    .pagination a:hover { background:#1a1a1a; }
+    .pagination .current { color:#fff; padding:4px 10px; border:1px solid #6a9eff; border-radius:3px; }
+    .pagination .disabled { color:#444; padding:4px 10px; border:1px solid #2a2a2a; border-radius:3px; }
+
+    .counter { font-size:12px; color:#668; margin-bottom:10px; }
+    .empty { color:#668; padding:20px; text-align:center; font-size:13px; }
+    .toggle { color:#668; font-size:11px; font-family:monospace; user-select:none; }
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/trades">Trades</a>
+    <a href="/stats">Результаты</a>
+    <a href="/events" class="active">События</a>
+    <a href="/signals">Сигналы</a>
+    <a href="/accounts">Аккаунты</a>
+    <a href="/settings">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>История событий
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+    </h1>
+    <div class="right"><span style="color:#666;">v{{ app_version }}</span></div>
+</header>
+<main>
+
+    <!-- Переключатель источников -->
+    <div class="source-tabs">
+        <a href="/events?source=global" class="{{ source == 'global' ? 'active' : '' }}">
+            Глобальные
+        </a>
+        <a href="/events?source=trade" class="{{ source == 'trade' ? 'active' : '' }}">
+            По сделкам
+        </a>
+    </div>
+
+    <!-- Фильтры -->
+    <form method="GET" action="/events" class="filters">
+        <input type="hidden" name="source" value="{{ source }}">
+        <div class="f-group">
+            <label>Символ</label>
+            <input type="text" name="symbol" value="{{ filters.symbol }}" placeholder="BTC / BTCUSDT" style="text-transform:uppercase;">
+        </div>
+        <div class="f-group">
+            <label>Level</label>
+            <select name="level">
+                <option value="">(любой)</option>
+                {% for l in levels %}
+                <option value="{{ l }}" {{ filters.level == l ? 'selected' : '' }}>{{ l }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="f-group">
+            <label>Тип события (kind)</label>
+            <select name="kind">
+                <option value="">(любой)</option>
+                {% for k in kinds %}
+                <option value="{{ k }}" {{ filters.kind == k ? 'selected' : '' }}>{{ k }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="f-group">
+            <label>С даты (MSK)</label>
+            <input type="date" name="from" value="{{ filters.from }}">
+        </div>
+        <div class="f-group">
+            <label>По дату (MSK)</label>
+            <input type="date" name="to" value="{{ filters.to }}">
+        </div>
+        <div class="f-group">
+            <button type="submit" class="btn btn-primary">Применить</button>
+        </div>
+        <div class="f-group">
+            <a href="/events?source={{ source }}" class="btn btn-secondary" style="text-decoration:none;display:inline-block;">Сбросить</a>
+        </div>
+    </form>
+
+    <div class="counter">
+        Найдено: <strong>{{ total }}</strong>{% if total > 0 %} · страница {{ page }} из {{ pages }}{% endif %}.
+        Клик по строке — раскрыть payload.
+    </div>
+
+    {% if rows is empty %}
+        <div class="empty">Нет событий, соответствующих фильтрам.</div>
+    {% else %}
+    <table class="events">
+        <thead>
+            <tr>
+                <th style="width:20px;"></th>
+                <th style="width:170px;">Время (MSK)</th>
+                <th style="width:70px;">Level</th>
+                <th style="width:220px;">Kind</th>
+                {% if source == 'trade' %}<th style="width:80px;">Trade #</th>{% endif %}
+                <th style="width:100px;">Символ</th>
+                <th>Payload (preview)</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+            {% set rowId = 'evt-' ~ source ~ '-' ~ r.id %}
+            <tr onclick="toggleRow('{{ rowId }}')" id="row-{{ rowId }}">
+                <td><span class="toggle" id="tg-{{ rowId }}">▸</span></td>
+                <td class="ts">{{ r.ts|msk('Y-m-d H:i') }}<span class="sec">:{{ r.ts|msk('s') }}</span></td>
+                <td class="lvl-{{ r.level }}">{{ r.level }}</td>
+                <td class="kind">{{ r.kind }}</td>
+                {% if source == 'trade' %}
+                <td class="trade-id">#{{ r.trade_id }}</td>
+                {% endif %}
+                <td class="symbol">{{ r.symbol ?? '—' }}</td>
+                <td style="color:#789;font-family:monospace;font-size:11px;">
+                    {{ r.payload_json|default('')|slice(0, 120) }}{% if r.payload_json and r.payload_json|length > 120 %}…{% endif %}
+                </td>
+            </tr>
+            <tr class="payload-row" id="pl-{{ rowId }}">
+                <td colspan="{{ source == 'trade' ? 7 : 6 }}">
+                    <pre id="pre-{{ rowId }}">{{ r.payload_json ?? '(пусто)' }}</pre>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <!-- Пагинация -->
+    {% if pages > 1 %}
+    <div class="pagination">
+        {% set qs = '?source=' ~ source
+            ~ (filters.symbol ? '&symbol=' ~ filters.symbol : '')
+            ~ (filters.level  ? '&level='  ~ filters.level  : '')
+            ~ (filters.kind   ? '&kind='   ~ filters.kind   : '')
+            ~ (filters.from   ? '&from='   ~ filters.from   : '')
+            ~ (filters.to     ? '&to='     ~ filters.to     : '')
+        %}
+        {% if page > 1 %}
+            <a href="/events{{ qs }}&page=1">« Первая</a>
+            <a href="/events{{ qs }}&page={{ page - 1 }}">‹ Назад</a>
+        {% else %}
+            <span class="disabled">« Первая</span>
+            <span class="disabled">‹ Назад</span>
+        {% endif %}
+        <span class="current">{{ page }} / {{ pages }}</span>
+        {% if page < pages %}
+            <a href="/events{{ qs }}&page={{ page + 1 }}">Вперёд ›</a>
+            <a href="/events{{ qs }}&page={{ pages }}">Последняя »</a>
+        {% else %}
+            <span class="disabled">Вперёд ›</span>
+            <span class="disabled">Последняя »</span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+</main>
+
+<script>
+function toggleRow(rowId) {
+    var row = document.getElementById('row-' + rowId);
+    var pl  = document.getElementById('pl-'  + rowId);
+    var tg  = document.getElementById('tg-'  + rowId);
+    if (!row || !pl || !tg) return;
+    if (pl.classList.contains('show')) {
+        pl.classList.remove('show');
+        row.classList.remove('expanded');
+        tg.textContent = '▸';
+        // Если есть встроенный JSON — попытка форматировать
+    } else {
+        pl.classList.add('show');
+        row.classList.add('expanded');
+        tg.textContent = '▾';
+        // Pretty-print
+        var pre = document.getElementById('pre-' + rowId);
+        if (pre && !pre.dataset.formatted) {
+            var raw = pre.textContent.trim();
+            if (raw && raw !== '(пусто)') {
+                try {
+                    var obj = JSON.parse(raw);
+                    pre.textContent = JSON.stringify(obj, null, 2);
+                } catch (e) { /* leave as-is */ }
+                pre.dataset.formatted = '1';
+            }
+        }
+    }
+}
+</script>
+{% endblock %}

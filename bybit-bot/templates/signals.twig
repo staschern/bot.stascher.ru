@@ -1,0 +1,263 @@
+{% extends "_layout.twig" %}
+{% block title %}Журнал сигналов — Bybit Futures Bot{% endblock %}
+{% block head %}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    nav a.active { color:#6a9eff; font-weight:600; }
+
+    .summary-strip {
+        display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;
+        padding:10px 12px; background:#181c24; border-radius:4px; font-size:12px;
+    }
+    .summary-strip .item { display:flex; align-items:center; gap:6px; }
+    .summary-strip .item .v { font-weight:600; }
+
+    .filters { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
+    .filters .f-group { display:flex; flex-direction:column; gap:3px; }
+    .filters label { font-size:11px; color:#889; }
+    .filters input, .filters select {
+        background:#1a1a1a; border:1px solid #444; color:#e0e0e0;
+        padding:5px 8px; border-radius:3px; font-size:12px; min-width:140px;
+    }
+    .filters input:focus, .filters select:focus { border-color:#6a9eff; outline:none; }
+
+    .btn { padding:6px 14px; border:none; border-radius:3px; cursor:pointer; font-size:12px; }
+    .btn-primary   { background:#2d5da8; color:#fff; }
+    .btn-primary:hover   { background:#3668bf; }
+    .btn-secondary { background:#444; color:#ccc; text-decoration:none; display:inline-block; }
+    .btn-secondary:hover { background:#555; }
+
+    table.signals { width:100%; border-collapse:collapse; font-size:12px; }
+    table.signals thead tr { border-bottom:1px solid #333; color:#889; text-align:left; }
+    table.signals th, table.signals td { padding:6px 8px; vertical-align:top; }
+    table.signals tbody tr.head-row { border-bottom:1px solid #2a2a2a; cursor:pointer; }
+    table.signals tbody tr.head-row:hover { background:#1a1a1a; }
+    table.signals tbody tr.head-row.expanded { background:#181c24; }
+
+    .ts        { font-family:monospace; font-size:11px; color:#e0c373; white-space:nowrap; }
+    .ts .sec   { color:#789; }
+    .symbol-cell { font-family:monospace; }
+    .symbol-cell .short { color:#ec9; }
+    .symbol-cell .full { color:#6a9eff; font-size:11px; }
+    .side-long  { color:#8fc88f; font-weight:600; }
+    .side-short { color:#e07373; font-weight:600; }
+    .target { font-family:monospace; color:#aab; }
+    .signal-type { color:#789; font-family:monospace; font-size:11px; }
+
+    .dec-badge { display:inline-block; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:600; }
+    .dec-accepted            { background:#1e3a1e; color:#8fc88f; }
+    .dec-rejected_unresolved { background:#3a2e1e; color:#e0c373; }
+    .dec-rejected_filter     { background:#2e2e3a; color:#aab; }
+    .dec-rejected_guard      { background:#3a1e1e; color:#e07373; }
+    .dec-rejected_duplicate  { background:#1e2e3a; color:#7abae0; }
+    .dec-rejected_other      { background:#3a1e2e; color:#c88fbb; }
+    .dec-pending             { background:#222; color:#668; }
+
+    .reason { color:#aab; font-style:italic; font-size:11px; }
+    .trade-link { color:#7a9; font-family:monospace; font-size:11px; text-decoration:none; }
+    .trade-link:hover { color:#9cb; text-decoration:underline; }
+
+    .detail-row { display:none; background:#0e1218; }
+    .detail-row.show { display:table-row; }
+    .detail-row td { padding:10px 16px; }
+    .detail-row .kv { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:6px 16px; font-size:11px; }
+    .detail-row .kv .k { color:#789; }
+    .detail-row .kv .v { color:#cde; font-family:monospace; }
+
+    .pagination { display:flex; gap:8px; justify-content:center; align-items:center; margin-top:16px; font-size:12px; color:#889; }
+    .pagination a { color:#6a9eff; text-decoration:none; padding:4px 10px; border:1px solid #333; border-radius:3px; }
+    .pagination a:hover { background:#1a1a1a; }
+    .pagination .current { color:#fff; padding:4px 10px; border:1px solid #6a9eff; border-radius:3px; }
+    .pagination .disabled { color:#444; padding:4px 10px; border:1px solid #2a2a2a; border-radius:3px; }
+
+    .counter { font-size:12px; color:#668; margin-bottom:10px; }
+    .empty { color:#668; padding:20px; text-align:center; font-size:13px; }
+    .toggle { color:#668; font-size:11px; font-family:monospace; user-select:none; }
+
+    .retention-note { font-size:11px; color:#789; margin-top:6px; }
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/trades">Trades</a>
+    <a href="/stats">Результаты</a>
+    <a href="/events">События</a>
+    <a href="/signals" class="active">Сигналы</a>
+    <a href="/accounts">Аккаунты</a>
+    <a href="/settings">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>Журнал сигналов
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+    </h1>
+    <div class="right"><span style="color:#666;">v{{ app_version }}</span></div>
+</header>
+<main>
+
+    <!-- Сводка решений -->
+    <div class="summary-strip">
+        <div class="item"><span class="k" style="color:#789;">Всего:</span><span class="v" style="color:#e0e0e0;">{{ total }}</span></div>
+        <div class="item"><span class="dec-badge dec-accepted">accepted</span> <span class="v">{{ summary.accepted ?? 0 }}</span></div>
+        <div class="item"><span class="dec-badge dec-rejected_filter">rejected_filter</span> <span class="v">{{ summary.rejected_filter ?? 0 }}</span></div>
+        <div class="item"><span class="dec-badge dec-rejected_guard">rejected_guard</span> <span class="v">{{ summary.rejected_guard ?? 0 }}</span></div>
+        <div class="item"><span class="dec-badge dec-rejected_unresolved">rejected_unresolved</span> <span class="v">{{ summary.rejected_unresolved ?? 0 }}</span></div>
+        <div class="item"><span class="dec-badge dec-rejected_duplicate">rejected_duplicate</span> <span class="v">{{ summary.rejected_duplicate ?? 0 }}</span></div>
+        <div class="item"><span class="dec-badge dec-rejected_other">rejected_other</span> <span class="v">{{ summary.rejected_other ?? 0 }}</span></div>
+        <div class="item"><span class="dec-badge dec-pending">pending</span> <span class="v">{{ summary.pending ?? 0 }}</span></div>
+    </div>
+
+    <!-- Фильтры -->
+    <form method="GET" action="/signals" class="filters">
+        <div class="f-group">
+            <label>Символ</label>
+            <input type="text" name="symbol" value="{{ filters.symbol }}" placeholder="BTC / BTCUSDT" style="text-transform:uppercase;">
+        </div>
+        <div class="f-group">
+            <label>Решение</label>
+            <select name="decision">
+                <option value="">(любое)</option>
+                <option value="accepted"            {{ filters.decision == 'accepted'            ? 'selected' : '' }}>accepted</option>
+                <option value="rejected_filter"     {{ filters.decision == 'rejected_filter'     ? 'selected' : '' }}>rejected_filter</option>
+                <option value="rejected_guard"      {{ filters.decision == 'rejected_guard'      ? 'selected' : '' }}>rejected_guard</option>
+                <option value="rejected_unresolved" {{ filters.decision == 'rejected_unresolved' ? 'selected' : '' }}>rejected_unresolved</option>
+                <option value="rejected_duplicate"  {{ filters.decision == 'rejected_duplicate'  ? 'selected' : '' }}>rejected_duplicate</option>
+                <option value="rejected_other"      {{ filters.decision == 'rejected_other'      ? 'selected' : '' }}>rejected_other</option>
+                <option value="pending"             {{ filters.decision == 'pending'             ? 'selected' : '' }}>pending (без решения)</option>
+            </select>
+        </div>
+        <div class="f-group">
+            <label>С даты (MSK)</label>
+            <input type="date" name="from" value="{{ filters.from }}">
+        </div>
+        <div class="f-group">
+            <label>По дату (MSK)</label>
+            <input type="date" name="to" value="{{ filters.to }}">
+        </div>
+        <div class="f-group">
+            <button type="submit" class="btn btn-primary">Применить</button>
+        </div>
+        <div class="f-group">
+            <a href="/signals" class="btn btn-secondary">Сбросить</a>
+        </div>
+    </form>
+
+    <div class="counter">
+        Найдено: <strong>{{ total }}</strong>{% if total > 0 %} · страница {{ page }} из {{ pages }}{% endif %}.
+        Клик по строке — раскрыть детали.
+        <div class="retention-note">Retention: сигналы старше 24 часов автоматически удаляются при каждом импорте.</div>
+    </div>
+
+    {% if rows is empty %}
+        <div class="empty">Нет сигналов, соответствующих фильтрам.</div>
+    {% else %}
+    <table class="signals">
+        <thead>
+            <tr>
+                <th style="width:20px;"></th>
+                <th style="width:170px;">Время (MSK)</th>
+                <th style="width:130px;">Символ</th>
+                <th style="width:60px;">Side</th>
+                <th style="width:70px;">Target %</th>
+                <th style="width:50px;">Type</th>
+                <th style="width:180px;">Решение</th>
+                <th>Причина</th>
+                <th style="width:80px;">Trade</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+            {% set rowId = 'sig-' ~ r.id %}
+            {% set decKey = r.decision ?? 'pending' %}
+            <tr class="head-row" onclick="toggleSig('{{ rowId }}')" id="row-{{ rowId }}">
+                <td><span class="toggle" id="tg-{{ rowId }}">▸</span></td>
+                <td class="ts">{{ r.saved_at_utc|msk('Y-m-d H:i') }}<span class="sec">:{{ r.saved_at_utc|msk('s') }}</span></td>
+                <td class="symbol-cell">
+                    <div class="short">{{ r.symbol }}</div>
+                    {% if r.bybit_symbol %}<div class="full">{{ r.bybit_symbol }}</div>{% endif %}
+                </td>
+                <td class="side-{{ r.side }}">{{ r.side }}</td>
+                <td class="target">{{ r.target }}</td>
+                <td class="signal-type">{{ r.signal_type }}</td>
+                <td><span class="dec-badge dec-{{ decKey }}">{{ decKey }}</span></td>
+                <td class="reason">{{ r.decision_reason ?? '—' }}</td>
+                <td>
+                    {% if r.trade_id %}
+                        <a href="/trades/{{ r.trade_id }}" class="trade-link" onclick="event.stopPropagation();">#{{ r.trade_id }}</a>
+                    {% else %}
+                        <span style="color:#445;">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr class="detail-row" id="dt-{{ rowId }}">
+                <td colspan="9">
+                    <div class="kv">
+                        <div><span class="k">ID:</span> <span class="v">{{ r.id }}</span></div>
+                        <div><span class="k">Saved at (UTC):</span> <span class="v">{{ r.saved_at_utc }}</span></div>
+                        <div><span class="k">Imported at:</span> <span class="v">{{ r.imported_at }}</span></div>
+                        <div><span class="k">Decision at:</span> <span class="v">{{ r.decision_at ?? '—' }}</span></div>
+                        <div><span class="k">Resolution:</span> <span class="v">{{ r.resolution_status }}</span></div>
+                        <div><span class="k">RSI:</span> <span class="v">{{ r.rsi ?? '—' }}</span></div>
+                        <div><span class="k">W7:</span> <span class="v">{{ r.w7 ?? '—' }}</span></div>
+                        <div><span class="k">W14:</span> <span class="v">{{ r.w14 ?? '—' }}</span></div>
+                        <div><span class="k">W30:</span> <span class="v">{{ r.w30 ?? '—' }}</span></div>
+                        <div><span class="k">W_all:</span> <span class="v">{{ r.w_all ?? '—' }}</span></div>
+                        <div><span class="k">Potential:</span> <span class="v">{{ r.potential ? 'да' : 'нет' }}</span></div>
+                    </div>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <!-- Пагинация -->
+    {% if pages > 1 %}
+    <div class="pagination">
+        {% set qs = '?'
+            ~ (filters.symbol   ? '&symbol='   ~ filters.symbol   : '')
+            ~ (filters.decision ? '&decision=' ~ filters.decision : '')
+            ~ (filters.from     ? '&from='     ~ filters.from     : '')
+            ~ (filters.to       ? '&to='       ~ filters.to       : '')
+        %}
+        {% if page > 1 %}
+            <a href="/signals{{ qs }}&page=1">« Первая</a>
+            <a href="/signals{{ qs }}&page={{ page - 1 }}">‹ Назад</a>
+        {% else %}
+            <span class="disabled">« Первая</span>
+            <span class="disabled">‹ Назад</span>
+        {% endif %}
+        <span class="current">{{ page }} / {{ pages }}</span>
+        {% if page < pages %}
+            <a href="/signals{{ qs }}&page={{ page + 1 }}">Вперёд ›</a>
+            <a href="/signals{{ qs }}&page={{ pages }}">Последняя »</a>
+        {% else %}
+            <span class="disabled">Вперёд ›</span>
+            <span class="disabled">Последняя »</span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+</main>
+
+<script>
+function toggleSig(rowId) {
+    var row = document.getElementById('row-' + rowId);
+    var dt  = document.getElementById('dt-'  + rowId);
+    var tg  = document.getElementById('tg-'  + rowId);
+    if (!row || !dt || !tg) return;
+    if (dt.classList.contains('show')) {
+        dt.classList.remove('show');
+        row.classList.remove('expanded');
+        tg.textContent = '▸';
+    } else {
+        dt.classList.add('show');
+        row.classList.add('expanded');
+        tg.textContent = '▾';
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,148 @@
+{% extends "_layout.twig" %}
+{% block title %}Trade #{{ trade.id }} — Bybit Futures Bot{% endblock %}
+{% block head %}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    .dl { display:grid; grid-template-columns:200px 1fr; gap:4px 16px; font-size:13px; }
+    .dl dt { color:#889; }
+    .dl dd { color:#e0e0e0; margin:0; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th { text-align:left; padding:7px 8px; background:#222; color:#aab; border-bottom:1px solid #333; }
+    td { padding:6px 8px; border-bottom:1px solid #2a2a2a; vertical-align:top; }
+    tr:hover td { background:#222; }
+    .status-filled, .status-OPEN, .status-CLOSED_PROFIT { color:#6aff6a; }
+    .status-cancelled, .status-CANCELLED { color:#666; }
+    .status-placed, .status-PENDING_CONDITIONAL { color:#ffcc44; }
+    .status-rejected { color:#ff6a6a; }
+    .status-CLOSED_LOSS { color:#ff6a6a; }
+    .back-link { color:#6a9eff; text-decoration:none; font-size:13px; }
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/trades">Trades</a>
+    <a href="/stats">Результаты</a>
+    <a href="/events">События</a>
+    <a href="/signals">Сигналы</a>
+    <a href="/accounts">Аккаунты</a>
+    <a href="/settings">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>Trade #{{ trade.id }} — {{ trade.symbol }}
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+    </h1>
+    <div class="right"><a href="/trades" class="back-link">← Назад</a></div>
+</header>
+<main>
+
+<div class="card">
+    <h2>Основная информация</h2>
+    <dl class="dl">
+        <dt>ID</dt><dd>{{ trade.id }}</dd>
+        <dt>Symbol</dt><dd>{{ trade.symbol }}</dd>
+        <dt>Side</dt><dd>{{ trade.side }}</dd>
+        <dt>Mode</dt><dd>{{ trade.mode }}</dd>
+        <dt>Strategy</dt><dd>{{ trade.strategy_id }}</dd>
+        <dt>Status</dt><dd class="status-{{ trade.status }}">{{ trade.status }}</dd>
+        <dt>Leverage</dt><dd>{{ trade.leverage ?? '—' }}x</dd>
+        <dt>Margin Mode</dt><dd>{{ trade.margin_mode ?? '—' }}</dd>
+        <dt>Entry Ref</dt><dd>{{ trade.entry_ref ?? '—' }}</dd>
+        <dt>Entry Real</dt><dd>{{ trade.entry_real ?? '—' }}</dd>
+        <dt>SL Init</dt><dd>{{ trade.sl_init ?? '—' }}</dd>
+        <dt>SL Current</dt><dd>{{ trade.sl_current ?? '—' }}</dd>
+        <dt>TP Init</dt><dd>{{ trade.tp_init ?? '—' }}</dd>
+        <dt>Signal Target%</dt><dd>{{ trade.signal_target_pct ?? '—' }}</dd>
+        <dt>Realized PnL</dt><dd>{{ trade.realized_pnl_usdt ?? '—' }}</dd>
+        <dt>Created At (MSK)</dt><dd>{{ trade.created_at|msk('Y-m-d H:i:s') }}</dd>
+        <dt>Opened At (MSK)</dt><dd>{{ trade.opened_at|msk('Y-m-d H:i:s') }}</dd>
+        <dt>Closed At (MSK)</dt><dd>{{ trade.closed_at|msk('Y-m-d H:i:s') }}</dd>
+        <dt>Signal ID</dt><dd>{{ trade.signal_id ?? '—' }}</dd>
+    </dl>
+</div>
+
+{% if orders %}
+<div class="card">
+    <h2>Ордера ({{ orders|length }})</h2>
+    <table>
+        <thead>
+            <tr><th>ID</th><th>Purpose</th><th>Side</th><th>Type</th><th>Qty</th>
+            <th>Trigger</th><th>SL Price</th><th>Status</th><th>Exchange</th><th>Placed At</th></tr>
+        </thead>
+        <tbody>
+        {% for o in orders %}
+        <tr>
+            <td>{{ o.id }}</td>
+            <td>{{ o.purpose }}</td>
+            <td>{{ o.side }}</td>
+            <td>{{ o.order_type }}</td>
+            <td>{{ o.qty|number_format(4) }}</td>
+            <td>{{ o.trigger_price is not null ? o.trigger_price|number_format(6) : '—' }}</td>
+            <td>{{ o.sl_price is not null ? o.sl_price|number_format(6) : '—' }}</td>
+            <td class="status-{{ o.status }}">{{ o.status }}</td>
+            <td>{{ o.exchange ?? '—' }}</td>
+            <td>{{ o.placed_at|msk('Y-m-d H:i:s') }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if positions %}
+<div class="card">
+    <h2>Позиции ({{ positions|length }})</h2>
+    <table>
+        <thead>
+            <tr><th>ID</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th>
+            <th>SL</th><th>TP</th><th>Exchange</th><th>Opened</th><th>Closed</th><th>PnL</th></tr>
+        </thead>
+        <tbody>
+        {% for p in positions %}
+        <tr>
+            <td>{{ p.id }}</td>
+            <td>{{ p.symbol }}</td>
+            <td>{{ p.side }}</td>
+            <td>{{ p.qty|number_format(4) }}</td>
+            <td>{{ p.avg_entry_price|number_format(6) }}</td>
+            <td>{{ p.sl_price is not null ? p.sl_price|number_format(6) : '—' }}</td>
+            <td>{{ p.tp_price is not null ? p.tp_price|number_format(6) : '—' }}</td>
+            <td>{{ p.exchange ?? '—' }}</td>
+            <td>{{ p.opened_at|msk('Y-m-d H:i:s') }}</td>
+            <td>{{ p.closed_at|msk('Y-m-d H:i:s') }}</td>
+            <td>{{ p.realised_pnl_usdt is not null ? p.realised_pnl_usdt|number_format(4) : '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if events %}
+<div class="card">
+    <h2>История событий ({{ events|length }})</h2>
+    <table>
+        <thead>
+            <tr><th>Время</th><th>Level</th><th>Kind</th><th>Payload</th></tr>
+        </thead>
+        <tbody>
+        {% for e in events %}
+        <tr>
+            <td>{{ e.ts|msk('Y-m-d H:i:s') }}</td>
+            <td>{{ e.level }}</td>
+            <td>{{ e.kind }}</td>
+            <td style="font-size:11px;color:#889;max-width:400px;overflow:hidden;">
+                {{ e.payload_json ?? '—' }}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+</main>
+{% endblock %}

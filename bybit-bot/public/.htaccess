@@ -1,0 +1,17 @@
+# Bybit Futures Bot — Apache rewrite в index.php (Slim front-controller)
+RewriteEngine On
+
+# Если файл/каталог существует — отдаём как есть.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Иначе всё уходит в index.php.
+RewriteRule ^ index.php [QSA,L]
+
+# Минимальная защита заголовков
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

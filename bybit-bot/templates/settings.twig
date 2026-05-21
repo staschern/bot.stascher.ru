@@ -1,0 +1,494 @@
+{% extends "_layout.twig" %}
+{% block title %}Настройки — Bybit Futures Bot{% endblock %}
+{% block head %}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    nav a.active { color:#6a9eff; font-weight:600; }
+    .form-group { margin-bottom:12px; }
+    .form-group label { display:block; font-size:12px; color:#889; margin-bottom:4px; }
+    .form-group input[type=text], .form-group input[type=number], .form-group select, .form-group textarea {
+        background:#1a1a1a; border:1px solid #444; color:#e0e0e0; padding:6px 10px;
+        border-radius:4px; font-size:13px; width:100%; box-sizing:border-box;
+    }
+    .form-group input[type=text]:focus, .form-group input[type=number]:focus,
+    .form-group select:focus, .form-group textarea:focus {
+        border-color:#6a9eff; outline:none;
+    }
+    .form-row { display:flex; gap:16px; flex-wrap:wrap; }
+    .form-row .form-group { flex:1; min-width:180px; }
+    .radio-group { display:flex; gap:16px; align-items:center; }
+    .radio-group label { display:inline; font-size:13px; color:#e0e0e0; cursor:pointer; }
+    .radio-group input[type=radio] { margin-right:4px; }
+    .check-group { display:flex; align-items:center; gap:8px; }
+    .check-group label { font-size:13px; color:#e0e0e0; }
+    .btn { padding:8px 20px; border:none; border-radius:4px; cursor:pointer; font-size:13px; }
+    .btn-primary { background:#2d5da8; color:#fff; }
+    .btn-primary:hover { background:#3668bf; }
+    .btn-danger { background:#7a2d2d; color:#fff; }
+    .btn-danger:hover { background:#9a3a3a; }
+    .btn-secondary { background:#444; color:#ccc; }
+    .btn-secondary:hover { background:#555; }
+    .alert { padding:10px 16px; border-radius:4px; margin-bottom:16px; font-size:13px; }
+    .alert-success { background:#1e3a1e; border:1px solid #3a7a3a; color:#8fc88f; }
+    .section-title { font-size:14px; font-weight:600; color:#6a9eff; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid #333; }
+    .action-row { display:flex; gap:12px; flex-wrap:wrap; }
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/trades">Trades</a>
+    <a href="/stats">Результаты</a>
+    <a href="/events">События</a>
+    <a href="/signals">Сигналы</a>
+    <a href="/accounts">Аккаунты</a>
+    <a href="/settings" class="active">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>Bybit Futures Bot — Настройки
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+    </h1>
+    <div class="right"><span style="color:#666;">v{{ app_version }}</span></div>
+</header>
+<main>
+
+{% if flash %}
+<div class="alert alert-success">{{ flash }}</div>
+{% endif %}
+
+<form method="POST" action="/settings">
+
+    <!-- ── Режим работы ── -->
+    <div class="card">
+        <div class="section-title">Режим работы</div>
+        <div class="form-group">
+            <label>Mode</label>
+            <div class="radio-group">
+                {% for m in ['paper','testnet','live','pause'] %}
+                <label>
+                    <input type="radio" name="mode" value="{{ m }}"
+                        {{ settings.mode is defined and settings.mode == m ? 'checked' : (mode == m ? 'checked' : '') }}>
+                    {{ m }}
+                </label>
+                {% endfor %}
+            </div>
+            <small style="color:#668;font-size:11px;margin-top:4px;display:block;">
+                pause — не обрабатывать новые сигналы, существующие позиции доживут.
+                live — РЕАЛЬНЫЕ ДЕНЬГИ! Сначала сохраните API ключи ниже.
+            </small>
+        </div>
+        {# v0.8.0: поле подтверждения — появляется только если выбран live #}
+        <div id="live-confirm-block" class="form-group" style="display:none;padding:10px;border:1px solid #d33;background:#2a0e0e;border-radius:4px;">
+            <label style="color:#f88;font-weight:bold;">⚠ Подтверждение live-режима</label>
+            <small style="color:#fbb;display:block;margin-bottom:6px;">
+                Вы включаете торговлю на РЕАЛЬНОМ счёте. Новые сигналы будут открываться на Bybit и влиять на ваш баланс.
+                Для подтверждения введите слово <code>CONFIRM</code>:
+            </small>
+            <input type="text" name="live_confirm" placeholder="CONFIRM" autocomplete="off"
+                   oninput="this.value=this.value.toUpperCase()"
+                   style="text-transform:uppercase;font-family:monospace;">
+        </div>
+        <div class="form-group">
+            <label>Margin Mode</label>
+            <div class="radio-group">
+                <label><input type="radio" name="bybit_margin_mode" value="cross"
+                    {{ (settings['bybit_margin_mode'] ?? 'cross') == 'cross' ? 'checked' : '' }}> cross</label>
+                <label><input type="radio" name="bybit_margin_mode" value="isolated"
+                    {{ (settings['bybit_margin_mode'] ?? 'cross') == 'isolated' ? 'checked' : '' }}> isolated</label>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Торговые лимиты ── -->
+    <div class="card">
+        <div class="section-title">Торговые лимиты</div>
+        <div class="form-row">
+            {% for key in ['delta_pct_of_amplitude','market_coef','paper_initial_deposit_usdt','min_signal_target_pct'] %}
+            <div class="form-group">
+                <label>{{ key }}</label>
+                <input type="number" step="any" name="{{ key }}" value="{{ settings[key] ?? '' }}">
+            </div>
+            {% endfor %}
+        </div>
+        <div class="form-row">
+            {% for key in ['max_open_positions','max_total_orders_with_pending','taker_fee_pct','signals_freshness_minutes'] %}
+            <div class="form-group">
+                <label>{{ key }}</label>
+                <input type="number" step="any" name="{{ key }}" value="{{ settings[key] ?? '' }}">
+            </div>
+            {% endfor %}
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label title="Запас на комиссии/слиппедж при расчёте qty (§5.4). Объём qty_safe = qty_raw × (1 − запас/100). Диапазон 0..50, дефолт 10.">qty_safety_margin_pct</label>
+                <input type="number" step="any" min="0" max="50"
+                       name="qty_safety_margin_pct"
+                       value="{{ settings['qty_safety_margin_pct'] ?? '10' }}">
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Защиты ── -->
+    <div class="card">
+        <div class="section-title">Защиты</div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Daily Drawdown</label>
+                <div class="check-group">
+                    <input type="hidden" name="daily_drawdown.enabled" value="0">
+                    <input type="checkbox" name="daily_drawdown.enabled" id="dd_en" value="1"
+                        {% if settings['daily_drawdown.enabled'] in ['1', 1, 'true'] %}checked{% endif %}>
+                    <label for="dd_en">Включить</label>
+                </div>
+                <input type="number" step="any" name="daily_drawdown.pct"
+                    value="{{ settings['daily_drawdown.pct'] ?? '' }}" placeholder="%, напр. 5">
+            </div>
+            <div class="form-group">
+                <label>Signal Upper Cap</label>
+                <div class="check-group">
+                    <input type="hidden" name="signal_upper_cap.enabled" value="0">
+                    <input type="checkbox" name="signal_upper_cap.enabled" id="suc_en" value="1"
+                        {% if settings['signal_upper_cap.enabled'] in ['1', 1, 'true'] %}checked{% endif %}>
+                    <label for="suc_en">Включить</label>
+                </div>
+                <input type="number" step="any" name="signal_upper_cap.pct"
+                    value="{{ settings['signal_upper_cap.pct'] ?? '' }}" placeholder="%">
+            </div>
+            <div class="form-group">
+                <label>Min Lot Overshoot %</label>
+                <input type="number" step="any" name="min_lot_overshoot.pct"
+                    value="{{ settings['min_lot_overshoot.pct'] ?? '' }}">
+            </div>
+            <div class="form-group">
+                <label>Funding Filter</label>
+                <div class="check-group">
+                    <input type="hidden" name="funding_filter.enabled" value="0">
+                    <input type="checkbox" name="funding_filter.enabled" id="ff_en" value="1"
+                        {% if settings['funding_filter.enabled'] in ['1', 1, 'true'] %}checked{% endif %}>
+                    <label for="ff_en">Включить</label>
+                </div>
+                <input type="number" step="any" name="funding_filter.extreme_pct"
+                    value="{{ settings['funding_filter.extreme_pct'] ?? '' }}" placeholder="extreme %">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Long/Short Balance</label>
+                <div class="check-group">
+                    <input type="hidden" name="long_short_balance.enabled" value="0">
+                    <input type="checkbox" name="long_short_balance.enabled" id="lsb_en" value="1"
+                        {% if settings['long_short_balance.enabled'] in ['1', 1, 'true'] %}checked{% endif %}>
+                    <label for="lsb_en">Включить</label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Max Share %</label>
+                <input type="number" step="any" name="long_short_balance.max_share_pct"
+                    value="{{ settings['long_short_balance.max_share_pct'] ?? '' }}">
+            </div>
+            <div class="form-group">
+                <label>Min Total to Check</label>
+                <input type="number" step="any" name="long_short_balance.min_total_to_check"
+                    value="{{ settings['long_short_balance.min_total_to_check'] ?? '' }}">
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Стратегии ── -->
+    <div class="card">
+        <div class="section-title">Стратегии</div>
+        <div class="form-group">
+            <label>Weights Mode</label>
+            <select name="weights_mode">
+                <option value="equal" {{ (settings['weights_mode'] ?? 'equal') == 'equal' ? 'selected' : '' }}>equal</option>
+                <option value="weighted" {{ (settings['weights_mode'] ?? 'equal') == 'weighted' ? 'selected' : '' }}>weighted</option>
+            </select>
+        </div>
+        {% for strat in strategies %}
+        <div class="form-row" style="border-top:1px solid #333;padding-top:10px;margin-top:10px;">
+            <div class="form-group" style="flex:0 0 auto;">
+                <label>{{ strat.id }} — {{ strat.name }}</label>
+                <div class="check-group">
+                    <input type="hidden" name="strategy_{{ strat.id }}_enabled" value="0">
+                    <input type="checkbox" name="strategy_{{ strat.id }}_enabled" id="s_{{ strat.id }}" value="1"
+                        {% if strat.enabled in [1, '1', 'true'] %}checked{% endif %}>
+                    <label for="s_{{ strat.id }}">Включить</label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Weight ({{ strat.id }})</label>
+                <input type="number" step="0.1" name="strategy_{{ strat.id }}_weight"
+                    value="{{ strat_settings[strat.id]['weight'] ?? '' }}" placeholder="1.0">
+            </div>
+            <div class="form-group">
+                <label>Leverage Cap ({{ strat.id }})</label>
+                <input type="number" step="1" name="strategy_{{ strat.id }}_leverage_cap"
+                    value="{{ strat_settings[strat.id]['leverage_cap'] ?? '' }}" placeholder="10">
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- ── Стейблкоины ── -->
+    <div class="card">
+        <div class="section-title">Стейблкоины (исключены из торговли)</div>
+        <div class="form-group">
+            <label>Один тикер на строку</label>
+            <textarea name="stablecoins" rows="8" placeholder="USDT&#10;USDC&#10;BUSD&#10;DAI">{{ stablecoins }}</textarea>
+        </div>
+    </div>
+
+    <div class="card">
+        <button type="submit" class="btn btn-primary">Сохранить настройки</button>
+    </div>
+
+</form>
+
+{# v0.8.0: ── Live-торговля ── #}
+<div class="card" id="live">
+    <div class="section-title" style="color:#f88;">⚡ Live-торговля (реальные деньги)</div>
+    <p style="color:#889;font-size:12px;margin-top:0;">
+        Ключи хранятся в <code>data/secrets/live_keys.php</code> (вне git, права 0600) — не в БД.
+        При сохранении выполняется тестовый запрос <code>/v5/account/wallet-balance</code> на mainnet;
+        если тест провален — ключи НЕ сохраняются.
+        Рекомендуемые права ключа Bybit: <strong>Contract → Orders</strong>, <strong>Positions</strong>, <strong>Account → Wallet</strong>. Без прав на вывод.
+    </p>
+
+    {% if live_flash %}
+        {% set parts = live_flash|split('|', 2) %}
+        {% set is_err = (parts[0] == 'ERR') %}
+        <div class="alert"
+             style="{% if is_err %}background:#3a1e1e;border:1px solid #7a3a3a;color:#f0bbbb;{% else %}background:#1e3a1e;border:1px solid #3a7a3a;color:#8fe88f;{% endif %} padding:10px 16px;border-radius:4px;margin-bottom:16px;font-size:13px;">
+            {{ parts[1]|default(live_flash) }}
+        </div>
+    {% endif %}
+
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;">
+        <span style="color:#889;font-size:13px;">Статус ключей:</span>
+        {% if live_keys.configured %}
+            <span style="color:#5c5;font-weight:bold;">● сохранены</span>
+            <span style="color:#aac;font-family:monospace;font-size:13px;">API key: {{ live_keys.api_key_mask }}</span>
+            {% if live_keys.mtime %}
+                <span style="color:#668;font-size:11px;">обновлено: {{ live_keys.mtime|msk }}</span>
+            {% endif %}
+        {% else %}
+            <span style="color:#c66;font-weight:bold;">○ не настроены</span>
+        {% endif %}
+        <span style="flex:1;"></span>
+        <span style="color:#889;font-size:13px;">Текущий режим:</span>
+        <span style="font-family:monospace;font-weight:bold;color:{% if mode == 'live' %}#f88{% elseif mode == 'pause' %}#fc8{% else %}#8ac{% endif %};">{{ mode }}</span>
+    </div>
+
+    {# Форма сохранения ключей #}
+    <form method="POST" action="/settings/live-keys" autocomplete="off">
+        <div class="form-row">
+            <div class="form-group" style="flex:1;">
+                <label>API Key</label>
+                <input type="text" name="live_api_key" placeholder="{% if live_keys.configured %}оставьте пустым чтобы не менять{% else %}ваш Bybit API key{% endif %}" autocomplete="off" spellcheck="false" style="font-family:monospace;">
+            </div>
+            <div class="form-group" style="flex:1;">
+                <label>API Secret</label>
+                <input type="password" name="live_api_secret" placeholder="{% if live_keys.configured %}оставьте пустым чтобы не менять{% else %}ваш Bybit API secret{% endif %}" autocomplete="new-password" spellcheck="false" style="font-family:monospace;">
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button type="submit" class="btn btn-primary">Сохранить и проверить</button>
+        </div>
+    </form>
+
+    {% if live_keys.configured %}
+    <div style="margin-top:16px;display:flex;gap:8px;border-top:1px solid #334;padding-top:16px;">
+        <form method="POST" action="/settings/live-keys/test" style="margin:0;">
+            <button type="submit" class="btn">Проверить сохранённые ключи</button>
+        </form>
+        <form method="POST" action="/settings/live-keys/delete" style="margin:0;"
+              onsubmit="return confirm('Удалить live API ключи? Действие необратимо (ключи придётся вводить заново).');">
+            <button type="submit" class="btn btn-danger">Удалить ключи</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+{# v0.8.0: JS — показываем поле CONFIRM только при выборе live #}
+<script>
+(function(){
+    function syncLiveConfirm(){
+        var radios = document.querySelectorAll('input[name="mode"]');
+        var block  = document.getElementById('live-confirm-block');
+        if (!block) return;
+        var current = '';
+        radios.forEach(function(r){ if (r.checked) current = r.value; });
+        var isLiveSelected = (current === 'live');
+        var currentMode = {{ mode|json_encode|raw }};
+        // показываем только при ПЕРЕХОДЕ из другого режима в live
+        block.style.display = (isLiveSelected && currentMode !== 'live') ? 'block' : 'none';
+    }
+    document.addEventListener('DOMContentLoaded', function(){
+        document.querySelectorAll('input[name="mode"]').forEach(function(r){
+            r.addEventListener('change', syncLiveConfirm);
+        });
+        syncLiveConfirm();
+    });
+})();
+</script>
+
+<!-- ── Соответствие тикеров ── -->
+<div class="card" id="aliases">
+    <div class="section-title">Соответствие тикеров (Bybit)</div>
+    <p style="color:#889;font-size:12px;margin-top:0;">
+        Маппинг короткого названия тикера (например <code>BTC</code>) на полное имя фьючерса
+        на бирже (например <code>BTCUSDT</code>). Используется как для S1-сигналов, так и для
+        ручного ввода ордеров. Если алиаса нет — резолвер пытается подобрать символ автоматически
+        из кеша инструментов. Инструментов в кеше Bybit: <strong>{{ instruments_count }}</strong>.
+    </p>
+
+    {% if alias_flash %}
+    {% set is_alias_error = (alias_flash starts with 'Ошибка') %}
+    <div class="alert"
+         style="{% if is_alias_error %}background:#3a1e1e;border:1px solid #7a3a3a;color:#c88f8f;{% else %}background:#1e3a1e;border:1px solid #3a7a3a;color:#8fc88f;{% endif %} padding:10px 16px;border-radius:4px;margin-bottom:16px;font-size:13px;">
+        {{ alias_flash }}
+    </div>
+    {% endif %}
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:12px;color:#889;">
+            Всего соответствий: <strong>{{ aliases|length }}</strong>.
+            Новые пары сохраняются автоматически при резолве сигналов/ордеров.
+        </div>
+        <form method="POST" action="/settings/aliases/backfill" style="margin:0;"
+              onsubmit="return confirm('Импортировать все уникальные пары (короткий→фьючерс) из истории сигналов?\n\nРучные и уже существующие алиасы НЕ будут перезаписаны.');">
+            <button type="submit" class="btn btn-secondary" style="padding:6px 14px;font-size:12px;">
+                Импорт из истории сигналов
+            </button>
+        </form>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px;">
+        <thead>
+            <tr style="border-bottom:1px solid #333;color:#889;text-align:left;">
+                <th style="padding:6px 8px;">Короткий</th>
+                <th style="padding:6px 8px;">Фьючерс</th>
+                <th style="padding:6px 8px;">Комментарий</th>
+                <th style="padding:6px 8px;">Источник</th>
+                <th style="padding:6px 8px;">Создан</th>
+                <th style="padding:6px 8px;width:170px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% if aliases is empty %}
+            <tr><td colspan="6" style="padding:12px 8px;color:#668;">
+                Пока нет ни одного алиаса. Нажмите «Импорт из истории сигналов» или добавьте вручную ниже.
+            </td></tr>
+        {% else %}
+            {% for a in aliases %}
+            {% set src_label = a.created_by == 'auto' ? 'авто' : (a.created_by == 'backfill' ? 'история' : 'ручной') %}
+            {% set src_color = a.created_by == 'auto' ? '#7a9' : (a.created_by == 'backfill' ? '#a97' : '#ec9') %}
+            <tr style="border-bottom:1px solid #2a2a2a;" id="alias-row-{{ a.source_symbol }}">
+                <!-- view-mode -->
+                <td style="padding:6px 8px;color:#e0e0e0;font-family:monospace;" class="view-mode">{{ a.source_symbol }}</td>
+                <td style="padding:6px 8px;color:#6a9eff;font-family:monospace;" class="view-mode">{{ a.bybit_symbol }}</td>
+                <td style="padding:6px 8px;color:#aab;" class="view-mode">{{ a.note ?? '' }}</td>
+                <td style="padding:6px 8px;font-size:11px;color:{{ src_color }};" class="view-mode">{{ src_label }}</td>
+                <td style="padding:6px 8px;color:#668;font-size:11px;" class="view-mode">{{ a.created_at ?? '' }}</td>
+                <td style="padding:6px 8px;" class="view-mode">
+                    <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px;"
+                            onclick="editAlias('{{ a.source_symbol }}')">Изменить</button>
+                    <form method="POST" action="/settings/aliases/delete" style="margin:0;display:inline;"
+                          onsubmit="return confirm('Удалить алиас {{ a.source_symbol }} → {{ a.bybit_symbol }}?');">
+                        <input type="hidden" name="source_symbol" value="{{ a.source_symbol }}">
+                        <button type="submit" class="btn btn-danger" style="padding:4px 10px;font-size:12px;">Удалить</button>
+                    </form>
+                </td>
+                <!-- edit-mode (изначально скрыт) -->
+                <td colspan="6" class="edit-mode" style="display:none;padding:6px 8px;background:#1a2030;">
+                    <form method="POST" action="/settings/aliases/edit" style="margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <input type="hidden" name="source_symbol" value="{{ a.source_symbol }}">
+                        <span style="color:#e0e0e0;font-family:monospace;">{{ a.source_symbol }}</span>
+                        <span style="color:#668;">→</span>
+                        <input type="text" name="bybit_symbol" value="{{ a.bybit_symbol }}" required
+                               style="text-transform:uppercase;width:140px;padding:4px 8px;background:#1a1a1a;border:1px solid #444;color:#e0e0e0;border-radius:3px;font-family:monospace;font-size:12px;">
+                        <input type="text" name="note" value="{{ a.note ?? '' }}" placeholder="Комментарий"
+                               style="flex:1;min-width:200px;padding:4px 8px;background:#1a1a1a;border:1px solid #444;color:#e0e0e0;border-radius:3px;font-size:12px;">
+                        <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px;">Сохранить</button>
+                        <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px;"
+                                onclick="cancelEdit('{{ a.source_symbol }}')">Отмена</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        {% endif %}
+        </tbody>
+    </table>
+
+    <script>
+    function editAlias(src) {
+        var row = document.getElementById('alias-row-' + src);
+        if (!row) return;
+        row.querySelectorAll('.view-mode').forEach(function(el){ el.style.display = 'none'; });
+        row.querySelectorAll('.edit-mode').forEach(function(el){ el.style.display = 'table-cell'; });
+    }
+    function cancelEdit(src) {
+        var row = document.getElementById('alias-row-' + src);
+        if (!row) return;
+        row.querySelectorAll('.edit-mode').forEach(function(el){ el.style.display = 'none'; });
+        row.querySelectorAll('.view-mode').forEach(function(el){
+            el.style.display = (el.tagName === 'TD') ? 'table-cell' : '';
+        });
+    }
+    </script>
+
+    <div style="border-top:1px solid #333;padding-top:12px;">
+        <div style="font-size:13px;color:#aab;margin-bottom:8px;">Добавить новый алиас:</div>
+        <form method="POST" action="/settings/aliases/add">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Короткий тикер (как в сигнале)</label>
+                    <input type="text" name="source_symbol" placeholder="BTC" required
+                           style="text-transform:uppercase;">
+                </div>
+                <div class="form-group">
+                    <label>Фьючерс на Bybit</label>
+                    <input type="text" name="bybit_symbol" placeholder="BTCUSDT" required
+                           style="text-transform:uppercase;">
+                </div>
+                <div class="form-group">
+                    <label>Комментарий (опционально)</label>
+                    <input type="text" name="note" placeholder="">
+                </div>
+                <div class="form-group" style="flex:0 0 auto;display:flex;align-items:flex-end;">
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </div>
+            <small style="color:#668;font-size:11px;">
+                Фьючерс должен существовать в кеше Bybit со статусом <code>Trading</code>.
+            </small>
+        </form>
+    </div>
+</div>
+
+<!-- ── Действия ── -->
+<div class="card">
+    <div class="section-title">Действия</div>
+    <div class="action-row">
+        <form method="POST" action="/settings/action"
+              onsubmit="return confirm('Закрыть все paper-позиции?')">
+            <input type="hidden" name="action" value="paper-close-all">
+            <button type="submit" class="btn btn-danger">Paper: закрыть все</button>
+        </form>
+        <form method="POST" action="/settings/action"
+              onsubmit="return confirm('Запустить reconciliation?')">
+            <input type="hidden" name="action" value="reconcile-now">
+            <button type="submit" class="btn btn-secondary">Reconcile Now</button>
+        </form>
+        <form method="POST" action="/settings/action">
+            <input type="hidden" name="action" value="deposit-refresh">
+            <button type="submit" class="btn btn-secondary">Deposit Refresh</button>
+        </form>
+    </div>
+</div>
+
+</main>
+{% endblock %}

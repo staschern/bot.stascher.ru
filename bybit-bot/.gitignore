@@ -1,0 +1,11 @@
+/vendor/
+/.env
+/data/bot.db
+/data/bot.db-journal
+/data/bot.db-wal
+/data/bot.db-shm
+/data/secrets/
+/data/signals/
+/logs/
+*.log
+.DS_Store

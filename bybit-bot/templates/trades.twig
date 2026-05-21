@@ -1,0 +1,1139 @@
+{% extends "_layout.twig" %}
+{% block title %}Trades — Bybit Futures Bot{% endblock %}
+{% block head %}
+{# v0.7.0: meta-refresh убран — обновление делает JS ниже с проверкой состояния формы #}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    nav a.active { color:#6a9eff; font-weight:600; }
+    .filter-bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+    .filter-bar label { font-size:12px; color:#889; }
+    .filter-bar select, .filter-bar input[type=text] {
+        background:#1a1a1a; border:1px solid #444; color:#e0e0e0;
+        padding:5px 8px; border-radius:4px; font-size:12px;
+    }
+    .filter-bar button { padding:5px 14px; background:#2d5da8; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th { text-align:left; padding:8px; background:#222; color:#aab; border-bottom:1px solid #333; }
+    td { padding:7px 8px; border-bottom:1px solid #2a2a2a; vertical-align:top; }
+    tr:hover td { background:#222; }
+    .status-OPEN               { color:#6aff6a; }
+    .status-PENDING_CONDITIONAL { color:#ffcc44; }
+    .status-CLOSED_PROFIT      { color:#44aaff; }
+    .status-CLOSED_LOSS        { color:#ff6a6a; }
+    .status-CANCELLED          { color:#666; }
+    .side-long  { color:#6aff6a; }
+    .side-short { color:#ff6a6a; }
+    .pnl-pos { color:#6aff6a; }
+    .pnl-neg { color:#ff6a6a; }
+
+    /* ── v0.7.0 #4: PnL открытых позиций + прогресс-бар ── */
+    .pnl-cell { display:flex; flex-direction:column; gap:2px; min-width:130px; }
+    .pnl-cell .pnl-num { font-weight:600; font-size:12px; }
+    .pnl-cell .pnl-bar-row { display:flex; align-items:center; gap:6px; font-size:10px; color:#888; }
+    .pnl-bar { width:80px; height:6px; background:#2a2a2a; border-radius:3px; overflow:hidden; position:relative; }
+    .pnl-bar > i { display:block; height:100%; transition:width .3s; }
+    .pnl-bar.state-before_be > i      { background:#ff6a6a; }
+    .pnl-bar.state-to_trigger > i     { background:#6aff6a; }
+    .pnl-bar.state-trailing_active > i{ background:#22ff22; box-shadow:0 0 4px #22ff22; }
+
+    /* ── v0.7.0 §6.4: колонка Avg (цена усреднения) ── */
+    .avg-cell.avg-none    { color:#666; }
+    .avg-cell.avg-placed  { color:#888; }                  /* выставлен, ждём срабатывания */
+    .avg-cell.avg-filled  { color:#ff6a6a; font-weight:600; } /* сработал */
+
+    /* ── v0.7.0 #7: эквити виджет ── */
+    .equity-widget {
+        display:flex; gap:18px; align-items:center; flex-wrap:wrap;
+        padding:10px 14px; margin-bottom:14px;
+        background:#1c1c1c; border:1px solid #333; border-radius:6px;
+        font-size:12px;
+    }
+    .equity-widget .eq-main { font-size:18px; font-weight:700; }
+    .equity-widget .eq-detail { color:#889; }
+    .equity-widget .eq-ratio { font-size:13px; padding:3px 8px; border-radius:4px; font-weight:600; }
+    .eq-color-green       { color:#22dd22; }
+    .eq-color-light-green { color:#9eef6a; }
+    .eq-color-yellow      { color:#ffcc44; }
+    .eq-color-light-red   { color:#ff8a6a; }
+    .eq-color-red         { color:#ff4444; }
+    .eq-ratio-green       { background:#1f3a1f; color:#aaffaa; }
+    .eq-ratio-light-green { background:#243a1f; color:#cfff9e; }
+    .eq-ratio-yellow      { background:#3a331f; color:#ffe5a0; }
+    .eq-ratio-light-red   { background:#3a261f; color:#ffc8a0; }
+    .eq-ratio-red         { background:#3a1f1f; color:#ffaaaa; }
+    .pending-value { color:#777; }                            /* qty/sl/tp до открытия позиции */
+    .progress-cell { color:#888; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+    .progress-bar  { display:inline-block; width:60px; height:6px; background:#2a2a2a; border-radius:3px; overflow:hidden; vertical-align:middle; position:relative; }
+    .progress-bar > i { display:block; height:100%; background:#888; transition:width .3s; }
+    .progress-overrun > i { background:#ffcc44; }              /* > 100% — близко к triggered */
+    .progress-negative .progress-bar > i { background:#ff6a6a; } /* < 0% — за SL */
+    .badge { display:inline-block; padding:2px 6px; border-radius:3px; font-size:11px; }
+    .badge-paper    { background:#2d4a8a; color:#c0d4ff; }
+    .badge-testnet  { background:#8a6d2d; color:#ffe5b8; }
+    .badge-live     { background:#8a2d2d; color:#ffc0c0; }
+    .badge-pause    { background:#3a3a3a; color:#aaa; }
+    a.trade-link { color:#6a9eff; text-decoration:none; }
+    a.trade-link:hover { text-decoration:underline; }
+    .total-badge { font-size:12px; color:#aab; margin-left:8px; }
+
+    /* ── Manual entry (s2) accordion ── */
+    details.manual-entry { margin-bottom:16px; background:#1c1c1c; border:1px solid #333; border-radius:6px; }
+    details.manual-entry > summary {
+        cursor:pointer; padding:10px 14px; font-size:13px; color:#c0d4ff;
+        list-style:none; user-select:none;
+    }
+    details.manual-entry > summary::-webkit-details-marker { display:none; }
+    /* v0.8.0.13: чекбокс RECOVERED в форме s2 */
+    .manual-recovered-toggle {
+        display:flex; align-items:center; gap:8px; padding:6px 0;
+        font-size:12px; color:#ffd86b; cursor:pointer; user-select:none;
+    }
+    .manual-recovered-toggle input[type=checkbox] { width:14px; height:14px; cursor:pointer; }
+    details.manual-entry > summary::before { content:"▸ "; display:inline-block; transition:transform .15s; }
+    details.manual-entry[open] > summary::before { content:"▾ "; }
+    details.manual-entry[open] > summary { border-bottom:1px solid #333; }
+    .manual-form { padding:14px; display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px 14px; }
+    .manual-form label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:#889; }
+    .manual-form input, .manual-form select {
+        background:#1a1a1a; border:1px solid #444; color:#e0e0e0;
+        padding:6px 8px; border-radius:4px; font-size:13px;
+    }
+    .manual-form input:focus, .manual-form select:focus { outline:none; border-color:#6a9eff; }
+    .manual-form input.invalid { border-color:#ff6a6a; background:#2a1a1a; }
+    .manual-form .form-hint { font-size:11px; color:#666; margin-top:2px; min-height:14px; }
+    .manual-form .form-hint.error { color:#ff6a6a; }
+    .manual-form .form-hint.ok    { color:#6aff6a; }
+    .manual-form-actions { grid-column:1/-1; display:flex; gap:10px; align-items:center; margin-top:6px; }
+    .manual-form-actions button {
+        padding:7px 18px; background:#2d5da8; color:#fff; border:none;
+        border-radius:4px; cursor:pointer; font-size:13px;
+    }
+    .manual-form-actions button:disabled { background:#3a3a3a; color:#666; cursor:not-allowed; }
+    .manual-form-actions .global-error { color:#ff6a6a; font-size:12px; }
+
+    /* Flash */
+    .flash { padding:10px 14px; border-radius:4px; margin-bottom:12px; font-size:13px; }
+    .flash-ok    { background:#1f3a1f; color:#aaffaa; border:1px solid #2d5d2d; }
+    .flash-error { background:#3a1f1f; color:#ffaaaa; border:1px solid #5d2d2d; }
+
+    /* ── v0.7.1 #1: счётчики позиций в equity-widget ── */
+    .counts-box { display:flex; flex-direction:column; gap:2px; line-height:1.3; }
+    .counts-row { display:flex; gap:6px; align-items:baseline; font-size:12px; }
+    .counts-row .ct-label { color:#889; min-width:54px; }
+    .counts-row .ct-total { font-weight:700; color:#e0e0e0; min-width:18px; text-align:right; }
+    .counts-row .ct-sub   { color:#666; font-size:11px; }
+    .counts-row .ct-long  { color:#6aff6a; }
+    .counts-row .ct-short { color:#ff6a6a; }
+
+    /* ── v0.7.1 #3: трёхярусные ячейки ── */
+    .stacked      { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
+    .stacked > span { display:block; }
+    .stacked .lbl { font-size:10px; color:#666; }
+    .stacked .v   { font-size:12px; }
+    .stacked .v.sub  { color:#888; font-size:11px; }
+    .stacked .v.dim  { color:#666; }
+
+    /* ── v0.7.1 #3: zebra-стрипинг ── */
+    tbody tr:nth-child(odd)  td { background:#1a1a1a; }
+    tbody tr:nth-child(even) td { background:#1e1e1e; }
+    tbody tr:hover td        { background:#262626; }
+
+    /* ── v0.7.1 #2: цветовые метки ── */
+    .sym-cell { position:relative; }
+    .sym-row  { display:inline-flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
+    .sym-dot  {
+        width:10px; height:10px; border-radius:50%;
+        border:1px solid #444; background:transparent; flex-shrink:0;
+        transition:transform .12s;
+    }
+    .sym-row:hover .sym-dot { transform:scale(1.2); }
+    .sym-dot.lbl-yellow { background:#ffcc44; border-color:#ffcc44; }
+    .sym-dot.lbl-green  { background:#6aff6a; border-color:#6aff6a; }
+    .sym-dot.lbl-red    { background:#ff6a6a; border-color:#ff6a6a; }
+    .sym-dot.lbl-blue   { background:#6a9eff; border-color:#6a9eff; }
+    .sym-dot.lbl-purple { background:#c06aff; border-color:#c06aff; }
+    /* v0.8.0.13: кнопка «Обновить сейчас» */
+    .btn-run-cron {
+        padding: 3px 10px; font-size: 11px; cursor: pointer;
+        background: #2d4a6a; color: #cfe2ff; border: 1px solid #4a6b8a;
+        border-radius: 3px; font-weight: 500;
+    }
+    .btn-run-cron:hover  { background: #3a5a7a; color: #fff; }
+    .btn-run-cron:disabled { opacity: 0.6; cursor: wait; }
+    /* v0.8.0.12: жёлтый бейдж RECOVERED для восстановленных conditional */
+    .badge-recovered { display:inline-block; margin-left:6px; padding:1px 5px; font-size:9px; font-weight:700;
+                       background:#5a4a1a; color:#ffd86b; border:1px solid #b8923a; border-radius:3px; letter-spacing:0.4px; }
+    /* v0.8.0.12: жёлтая кнопка «Восстановить» */
+    .btn-restore-trade { margin-top:4px; padding:2px 8px; font-size:11px; cursor:pointer;
+                         background:#b8923a; color:#1a1a1a; border:1px solid #d4a84a; border-radius:3px; font-weight:600; }
+    .btn-restore-trade:hover { background:#d4a84a; }
+    .btn-restore-trade:disabled { opacity:0.5; cursor:wait; }
+
+    .label-palette {
+        position:absolute; top:100%; left:0; margin-top:4px; z-index:50;
+        background:#252525; border:1px solid #444; border-radius:6px;
+        padding:6px; display:none; gap:5px; box-shadow:0 4px 10px rgba(0,0,0,.4);
+        flex-direction:row;
+    }
+    .label-palette.open { display:flex; }
+    .label-palette .pal-dot {
+        width:18px; height:18px; border-radius:50%;
+        cursor:pointer; border:1px solid #555;
+        transition:transform .1s;
+    }
+    .label-palette .pal-dot:hover { transform:scale(1.15); }
+    .label-palette .pal-dot.pal-none   { background:transparent; border-style:dashed; }
+    .label-palette .pal-dot.pal-yellow { background:#ffcc44; }
+    .label-palette .pal-dot.pal-green  { background:#6aff6a; }
+    .label-palette .pal-dot.pal-red    { background:#ff6a6a; }
+    .label-palette .pal-dot.pal-blue   { background:#6a9eff; }
+    .label-palette .pal-dot.pal-purple { background:#c06aff; }
+
+    /* v0.7.3: кнопка ручного закрытия активной позиции */
+    .btn-close-trade {
+        margin-top:4px;
+        padding:2px 8px;
+        font-size:11px;
+        background:#3a1f1f; color:#ffb0b0;
+        border:1px solid #663030; border-radius:3px;
+        cursor:pointer;
+        transition:background .15s, color .15s;
+    }
+    .btn-close-trade:hover  { background:#552525; color:#fff; }
+    .btn-close-trade:disabled { opacity:.5; cursor:wait; }
+    /* v0.9.0-step7 task4: acc-badge под Symbol — 6 цветов по (account_id %% 6) */
+    .acc-badge {
+        display:inline-block; margin-top:3px; padding:1px 6px;
+        font-size:10px; font-weight:600; line-height:1.4;
+        border-radius:3px; border:1px solid currentColor;
+        background:rgba(255,255,255,0.04);
+    }
+    .acc-c1 { color:#6ab0ff; }   /* голубой   */
+    .acc-c2 { color:#ffb46a; }   /* оранжевый */
+    .acc-c3 { color:#9aff6a; }   /* зелёный   */
+    .acc-c4 { color:#ff8fb1; }   /* розовый   */
+    .acc-c5 { color:#b599ff; }   /* фиолет  */
+    .acc-c6 { color:#ffd86a; }   /* жёлтый    */
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/trades" class="active">Trades</a>
+    <a href="/stats">Результаты</a>
+    <a href="/events">События</a>
+    <a href="/signals">Сигналы</a>
+    <a href="/accounts">Аккаунты</a>
+    <a href="/settings">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>Bybit Futures Bot — Trades
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+        <span class="total-badge">{{ total }} записей</span>
+    </h1>
+    <div class="right"><span style="color:#666;">v{{ app_version }}</span></div>
+</header>
+<main>
+<div class="card">
+
+    {# Flash message из cookie manual_flash #}
+    <div id="manual-flash"></div>
+
+    {# ── v0.7.0 #7: эквити виджет ── #}
+    {# v0.9.0-step6: если filter_account выбран — показываем имя в заголовке,
+       иначе виджет отражает сумму по всем сделкам режима (testnet/live = все аккаунты). #}
+    <div class="equity-widget" id="eq-widget">
+        <div>
+            <div class="eq-detail">
+                Equity ({{ mode }})
+                {% if filter_account is not null %}
+                    <span style="color:#7aa;font-size:11px;">→ acc: {{ filter_account_name ?: ('#' ~ filter_account) }}</span>
+                {% elseif mode == 'testnet' or mode == 'live' %}
+                    <span style="color:#779;font-size:11px;">→ все аккаунты</span>
+                {% endif %}
+            </div>
+            <div class="eq-main eq-color-{{ equity.color }}">{{ equity.equity|number_format(2) }} USDT</div>
+        </div>
+        <div>
+            <div class="eq-detail">D0 (старт)</div>
+            <div style="font-weight:600;">{{ equity.d0|number_format(2) }} USDT</div>
+        </div>
+        <div>
+            <div class="eq-detail">Wallet</div>
+            <div>{{ equity.wallet|number_format(2) }}</div>
+        </div>
+        <div>
+            <div class="eq-detail">Floating PnL</div>
+            <div class="{{ equity.floating_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                {{ equity.floating_pnl >= 0 ? '+' : '' }}{{ equity.floating_pnl|number_format(2) }}
+            </div>
+        </div>
+        <div>
+            <div class="eq-detail">Realized</div>
+            <div class="{{ equity.realized >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                {{ equity.realized >= 0 ? '+' : '' }}{{ equity.realized|number_format(2) }}
+            </div>
+        </div>
+        <div>
+            <div class="eq-detail">Margin (open)</div>
+            <div>{{ equity.margin_open|number_format(2) }}</div>
+        </div>
+        {# ── v0.7.1 #1: счётчики «Активных» ── #}
+        <div class="counts-box" style="margin-left:8px; padding-left:14px; border-left:1px solid #2c2c2c;">
+            <div class="counts-row">
+                <span class="ct-label">OPEN:</span>
+                <span class="ct-total">{{ counts.open.total }}</span>
+                <span class="ct-sub">(<span class="ct-long">L:{{ counts.open.long }}</span> / <span class="ct-short">S:{{ counts.open.short }}</span>)</span>
+            </div>
+            <div class="counts-row">
+                <span class="ct-label">AVG:</span>
+                <span class="ct-total">{{ counts.averaged.total }}</span>
+                <span class="ct-sub">(<span class="ct-long">L:{{ counts.averaged.long }}</span> / <span class="ct-short">S:{{ counts.averaged.short }}</span>)</span>
+            </div>
+            <div class="counts-row">
+                <span class="ct-label">PENDING:</span>
+                <span class="ct-total">{{ counts.pending.total }}</span>
+                <span class="ct-sub">(<span class="ct-long">L:{{ counts.pending.long }}</span> / <span class="ct-short">S:{{ counts.pending.short }}</span>)</span>
+            </div>
+        </div>
+        <div style="margin-left:auto;">
+            <span class="eq-ratio eq-ratio-{{ equity.color }}">{{ (equity.ratio * 100)|number_format(1) }}% от D0</span>
+        </div>
+    </div>
+
+    {# ── Manual entry (Strategy 2) accordion ── #}
+    <details class="manual-entry" id="manual-entry">
+        <summary>➕ Ручной ввод условного ордера (s2)</summary>
+        <form class="manual-form" method="POST" action="/manual/submit" id="manual-form">
+            <label>Symbol
+                <input type="text" name="symbol" id="m-symbol" list="known-symbols"
+                       placeholder="напр. MNT или BTCUSDT" autocomplete="off" required
+                       pattern="[A-Za-z0-9]{2,20}">
+                <span class="form-hint" id="m-symbol-hint">будет нормализован в *USDT</span>
+            </label>
+            <label>Side
+                <select name="side" id="m-side" required>
+                    <option value="long">long</option>
+                    <option value="short">short</option>
+                </select>
+                <span class="form-hint" id="m-side-hint">лонг: TP выше entry; шорт: TP ниже</span>
+            </label>
+            <label>Entry (trigger)
+                <input type="number" name="entry" id="m-entry" step="any" min="0" required>
+                <span class="form-hint" id="m-entry-hint">цена срабатывания условного ордера</span>
+            </label>
+            <label>SL
+                <input type="number" name="sl" id="m-sl" step="any" min="0" required>
+                <span class="form-hint" id="m-sl-hint"></span>
+            </label>
+            <label>TP
+                <input type="number" name="tp" id="m-tp" step="any" min="0" required>
+                <span class="form-hint" id="m-tp-hint"></span>
+            </label>
+            {# v0.8.0.13: флажок RECOVERED — при включённом cron не отменяет ордер при пересечении SL до открытия позиции #}
+            <label class="manual-recovered-toggle"
+                   title="Если включено — conditional не будет автоматически отменён при пересечении SL до открытия позиции. Отмена произойдёт только при появлении парной позиции по тому же тикеру в противоположную сторону.">
+                <input type="checkbox" name="ignore_sl_until_open" id="m-recovered" value="1">
+                <span>Не снимать по SL до открытия позиции (RECOVERED)</span>
+            </label>
+            {# v0.9.0-step4c: мультиселект аккаунтов (только для testnet/live) #}
+            {% if mode == 'testnet' or mode == 'live' %}
+                <div class="manual-accounts-block" style="flex-basis:100%;border-top:1px dashed #ddd;padding-top:8px;margin-top:4px;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <strong style="font-size:12px;">Аккаунты ({{ mode }}):</strong>
+                        {% if manual_accounts is defined and manual_accounts|length > 0 %}
+                            <label class="manual-acc-toggle" style="font-size:11px;color:#666;">
+                                <input type="checkbox" id="m-acc-all" checked> выбрать все
+                            </label>
+                            <div id="m-accounts-list" style="display:flex;flex-wrap:wrap;gap:8px;">
+                                {% for acc in manual_accounts %}
+                                    <label class="manual-acc-item"
+                                           style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border:1px solid #ccc;border-radius:4px;background:#f7f7f7;font-size:12px;">
+                                        <input type="checkbox" name="account_ids[]" value="{{ acc.id }}"
+                                               class="m-acc-checkbox" checked>
+                                        <span>{{ acc.name }}</span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <span style="font-size:11px;color:#c00;">
+                                Нет enabled аккаунтов для network={{ mode }} — открытие невозможно.
+                                <a href="/accounts" style="margin-left:4px;">Создать аккаунт</a>
+                            </span>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endif %}
+            <div class="manual-form-actions">
+                <button type="submit" id="m-submit" disabled>Отправить</button>
+                <span class="global-error" id="m-global-error"></span>
+                <span style="color:#666;font-size:11px;margin-left:auto;">
+                    qty / leverage рассчитаются автоматически (как в s1)
+                </span>
+            </div>
+        </form>
+    </details>
+
+    <datalist id="known-symbols">
+        {% for sym in known_symbols %}<option value="{{ sym }}">{% endfor %}
+    </datalist>
+
+    {# v0.9.0-step9: панель пользовательского refresh — кнопка + индикатор статуса. #}
+    <div id="trades-refresh-bar" style="display:flex;align-items:center;gap:10px;font-size:11px;color:#889;margin:0 0 8px;">
+        <button type="button" id="btn-refresh-trades"
+                style="padding:4px 12px;background:#2d5da8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;">Обновить</button>
+        <span id="refresh-status">Авто-обновление каждые 30 сек</span>
+    </div>
+
+    <form method="GET" action="/trades" class="filter-bar" id="trades-filter-form">
+        <label>Exchange:
+            <select name="exchange">
+                <option value="" {{ filter_exchange == '' ? 'selected' : '' }}>Все</option>
+                <option value="paper"   {{ filter_exchange == 'paper'   ? 'selected' : '' }}>paper</option>
+                <option value="testnet" {{ filter_exchange == 'testnet' ? 'selected' : '' }}>testnet</option>
+                <option value="live"    {{ filter_exchange == 'live'    ? 'selected' : '' }}>live</option>
+            </select>
+        </label>
+        {# v0.9.0-step6: фильтр по аккаунту #}
+        {% if filter_accounts is defined and filter_accounts|length > 0 %}
+        <label>Аккаунт:
+            <select name="account">
+                <option value="" {{ filter_account is null ? 'selected' : '' }}>все</option>
+                {% for acc in filter_accounts %}
+                    <option value="{{ acc.id }}" {{ filter_account == acc.id ? 'selected' : '' }}>
+                        #{{ acc.id }} {{ acc.name }} [{{ acc.network }}]{{ acc.enabled ? '' : ' (off)' }}
+                    </option>
+                {% endfor %}
+            </select>
+        </label>
+        {% endif %}
+        <label>Status:
+            <select name="status">
+                <option value="active"    {{ filter_status == 'active'    ? 'selected' : '' }}>активные (open+pending+avg)</option>
+                <option value="open"      {{ filter_status == 'open'      ? 'selected' : '' }}>open</option>
+                <option value="averaged"  {{ filter_status == 'averaged'  ? 'selected' : '' }}>усреднённые</option>
+                <option value="pending"   {{ filter_status == 'pending'   ? 'selected' : '' }}>pending</option>
+                <option value="closed"    {{ filter_status == 'closed'    ? 'selected' : '' }}>closed</option>
+                <option value="cancelled" {{ filter_status == 'cancelled' ? 'selected' : '' }}>cancelled</option>
+                <option value="closed_or_cancelled" {{ filter_status == 'closed_or_cancelled' ? 'selected' : '' }}>closed+cancelled</option>
+                <option value="all"       {{ filter_status == 'all'       ? 'selected' : '' }}>все</option>
+            </select>
+        </label>
+        <label>Symbol:
+            <input type="text" name="symbol" value="{{ filter_symbol }}" placeholder="BTCUSDT">
+        </label>
+        {# v0.9.0-step9 task2: фильтр по периоду. Чекбокс по умолчанию выключен. #}
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;border-left:1px solid #333;padding-left:10px;margin-left:4px;">
+            <input type="checkbox" name="period" value="1" {{ filter_period_enabled ? 'checked' : '' }} id="f-period-toggle" style="margin:0;">
+            <span>Период</span>
+        </label>
+        <label id="f-period-fields-df" style="{{ filter_period_enabled ? '' : 'display:none;' }}">По дате:
+            <select name="df">
+                <option value="auto"   {{ filter_date_field == 'auto'   ? 'selected' : '' }}>auto ({{ filter_date_field_resolved }})</option>
+                <option value="placed" {{ filter_date_field == 'placed' ? 'selected' : '' }}>placed</option>
+                <option value="opened" {{ filter_date_field == 'opened' ? 'selected' : '' }}>opened</option>
+                <option value="closed" {{ filter_date_field == 'closed' ? 'selected' : '' }}>closed</option>
+            </select>
+        </label>
+        <label id="f-period-fields-from" style="{{ filter_period_enabled ? '' : 'display:none;' }}">с:
+            <input type="date" name="from" value="{{ filter_from }}">
+        </label>
+        <label id="f-period-fields-to" style="{{ filter_period_enabled ? '' : 'display:none;' }}">по:
+            <input type="date" name="to" value="{{ filter_to }}">
+        </label>
+        <button type="submit">Фильтр</button>
+        <a href="/trades?status=all" style="color:#aab;font-size:12px;margin-left:4px;">сбросить</a>
+    </form>
+
+    <div id="trades-content">
+    {% if trades is empty %}
+    <p style="color:#666;font-style:italic;">Сделок нет.</p>
+    {% else %}
+    <table>
+        <thead>
+            {# v0.8.0.9: кликабельные заголовки дат для сортировки #}
+            {# v0.9.0-step6: в sort_link добавили acc для сохранения фильтра по аккаунту. #}
+            {% macro sort_link(key, label, current_key, current_dir, ex, st, sym, acc) %}
+                {% set new_dir = (current_key == key and current_dir == 'desc') ? 'asc' : 'desc' %}
+                {% set arrow = (current_key == key) ? (current_dir == 'desc' ? ' ↓' : ' ↑') : '' %}
+                <a href="/trades?exchange={{ ex|url_encode }}&status={{ st|url_encode }}&symbol={{ sym|url_encode }}{% if acc is not null %}&account={{ acc }}{% endif %}&sort={{ key }}&dir={{ new_dir }}" style="color:inherit;text-decoration:none;">{{ label }}{{ arrow }}</a>
+            {% endmacro %}
+            {% import _self as srt %}
+            <tr>
+                <th>ID</th>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Exch / Strat</th>
+                <th>Entry / Qty / Lev</th>
+                <th>SL / TP / Avg</th>
+                <th>Status</th>
+                <th>{{ srt.sort_link('placed', 'Placed', sort_key, sort_dir, filter_exchange, filter_status, filter_symbol, filter_account) }} /
+                    {{ srt.sort_link('opened', 'Opened', sort_key, sort_dir, filter_exchange, filter_status, filter_symbol, filter_account) }} /
+                    {{ srt.sort_link('closed', 'Closed', sort_key, sort_dir, filter_exchange, filter_status, filter_symbol, filter_account) }}</th>
+                <th>PnL</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for t in trades %}
+            {% set is_pending = (t.status == 'PENDING_CONDITIONAL') %}
+            {# v0.7.0 §6: SL/TP — из display_sl / display_tp (источник выбран в контроллере):
+               PENDING_CONDITIONAL → sl_init / tp_init
+               OPEN/AVERAGED       → sl_current / trailing_trigger
+            #}
+            {% set show_qty = is_pending ? t.order_qty : t.qty %}
+            {% set show_sl  = t.display_sl %}
+            {% set show_tp  = t.display_tp %}
+            {% set value_class = is_pending ? 'pending-value' : '' %}
+            {% set label = t.color_label|default('') %}
+        <tr data-trade-id="{{ t.id }}">
+            <td>{{ t.id }}</td>
+            <td class="sym-cell">
+                {# v0.9.0-step7 task4: Symbol и acc-badge сложены stacked, RECOVERED — в верхней строке справа от Symbol #}
+                <div class="stacked">
+                    <span>
+                        <span class="sym-row" data-trade-id="{{ t.id }}" title="Клик — цветовая метка">
+                            <span class="sym-dot{% if label %} lbl-{{ label }}{% endif %}" data-current="{{ label }}"></span>
+                            <strong>{{ t.symbol }}</strong>
+                        </span>
+                        {% if t.ignore_sl_until_open == 1 and t.status == 'PENDING_CONDITIONAL' %}
+                            <span class="badge-recovered" title="Выставлен вновь после отмены. SL не отменяет ордер до открытия">RECOVERED</span>
+                        {% endif %}
+                    </span>
+                    {% if t.account_id is not null %}
+                        {% set acc_palette = ['c1','c2','c3','c4','c5','c6'] %}
+                        <span class="v sub">
+                            <span class="acc-badge acc-{{ cycle(acc_palette, t.account_id - 1) }}" title="Аккаунт #{{ t.account_id }}">acc: {{ t.account_name ?: ('#' ~ t.account_id) }}</span>
+                        </span>
+                    {% endif %}
+                </div>
+            </td>
+            <td class="{{ t.side == 'long' ? 'side-long' : 'side-short' }}">{{ t.side }}</td>
+            {# Exchange / Strategy — двухярусно. v0.9.0-step7 task4: acc-badge перенесён под Symbol #}
+            <td>
+                <div class="stacked">
+                    <span><span class="badge badge-{{ t.mode }}">{{ t.mode }}</span></span>
+                    <span class="v sub">{{ t.strategy_id }}</span>
+                </div>
+            </td>
+            {# Entry / Qty / Lev — трёхярусно #}
+            <td>
+                <div class="stacked">
+                    <span class="v {{ value_class }}">
+                        {%- if t.avg_entry_price is not null -%}{{ t.avg_entry_price|number_format(6) }}
+                        {%- elseif t.entry_real is not null -%}{{ t.entry_real|number_format(6) }}
+                        {%- elseif t.entry_ref is not null -%}{{ t.entry_ref|number_format(6) }}
+                        {%- else -%}—{%- endif -%}
+                    </span>
+                    {# v0.8.0.9: qty + (размер в USDT) в скобках #}
+                    <span class="v sub {{ value_class }}">
+                        {{ t.qty_show is not null ? t.qty_show|number_format(4) : '—' }}
+                        {%- if t.qty_usdt is not null %} <span style="color:#7aa;font-size:11px;">({{ t.qty_usdt|number_format(2) }} USDT)</span>{% endif %}
+                    </span>
+                    {# v0.9.0-step7 task1: Lev + (entry*qty/lev = реальная маржа в USDT) #}
+                    <span class="v sub">
+                        {{ t.leverage is not null ? t.leverage ~ 'x' : '—' }}
+                        {%- if t.qty_usdt is not null and t.leverage is not null and t.leverage > 0 %} <span style="color:#7aa;font-size:11px;">({{ (t.qty_usdt / t.leverage)|number_format(2) }} USDT)</span>{% endif %}
+                    </span>
+                </div>
+            </td>
+            {# SL / TP / Avg — трёхярусно #}
+            <td>
+                <div class="stacked">
+                    {# v0.8.0.9/.11: SL + PnL на этом уровне. Цвет и знак — по знаку PnL. #}
+                    <span class="v {{ value_class }}">
+                        {{ show_sl is not null ? show_sl|number_format(6) : '—' }}
+                        {%- if t.sl_pnl_usdt is not null %} <span class="{{ t.sl_pnl_usdt >= 0 ? 'pnl-pos' : 'pnl-neg' }}" style="font-size:11px;">({{ t.sl_pnl_usdt >= 0 ? '+' : '' }}{{ t.sl_pnl_usdt|number_format(2) }} USDT)</span>{% endif %}
+                    </span>
+                    {# v0.8.0.9: TP + (доход на этом уровне в USDT) зелёным.
+                       v0.8.0.10: если trailing активирован — показываем trailing_stop_price синим
+                       + (прибыль на этом уровне) вместо исходного TP. #}
+                    {% if t.trailing_active and t.trailing_stop_price is not null %}
+                        <span class="v" style="color:#4ab2ff;">
+                            {{ t.trailing_stop_price|number_format(6) }}
+                            {%- if t.trailing_stop_pnl_usdt is not null %} <span style="color:#4ab2ff;font-size:11px;">({{ t.trailing_stop_pnl_usdt >= 0 ? '+' : '' }}{{ t.trailing_stop_pnl_usdt|number_format(2) }} USDT)</span>{% endif %}
+                        </span>
+                    {% else %}
+                        <span class="v {{ value_class }}">
+                            {{ show_tp is not null ? show_tp|number_format(6) : '—' }}
+                            {%- if t.tp_pnl_usdt is not null %} <span class="pnl-pos" style="font-size:11px;">({{ t.tp_pnl_usdt >= 0 ? '+' : '' }}{{ t.tp_pnl_usdt|number_format(2) }} USDT)</span>{% endif %}
+                        </span>
+                    {% endif %}
+                    <span class="v avg-cell avg-{{ t.display_avg_state }}">
+                        {%- if t.display_avg_price is not null -%}
+                            {{ t.display_avg_price|number_format(6) }}
+                        {%- else -%}—{%- endif -%}
+                    </span>
+                </div>
+            </td>
+            <td class="status-{{ t.status }}">{{ t.status }}</td>
+            {# Placed / Opened / Closed — трёхярусно #}
+            <td>
+                <div class="stacked">
+                    <span class="v sub">{{ t.order_placed_at|msk }}</span>
+                    <span class="v sub">{{ t.opened_at|msk }}</span>
+                    <span class="v sub">{{ t.closed_at|msk }}</span>
+                </div>
+            </td>
+            <td>
+                {% if is_pending %}
+                    {% if t.pending_progress_pct is not null %}
+                        {% set pp = t.pending_progress_pct %}
+                        {% set bar_w = (pp < 0) ? 0 : (pp > 100 ? 100 : pp) %}
+                        {% set wrap_class = 'progress-cell' ~ (pp > 100 ? ' progress-overrun' : '') ~ (pp < 0 ? ' progress-negative' : '') %}
+                        <span class="{{ wrap_class }}" title="Расстояние от SL до Entry. 0% = рядом с SL (отмена), 100% = выстрел. Цена: {{ t.order_last_price|number_format(6) }}">
+                            <span>{{ pp|number_format(0) }}%</span>
+                            <span class="progress-bar"><i style="width:{{ bar_w }}%"></i></span>
+                        </span>
+                    {% else %}<span class="pending-value">—</span>{% endif %}
+                {% elseif (t.status == 'OPEN' or t.status == 'AVERAGED') and t.open_pnl_usdt is not null %}
+                    {% set pnlU = t.open_pnl_usdt %}
+                    {% set pnlP = t.open_pnl_pct %}
+                    {% set pnlCls = pnlU >= 0 ? 'pnl-pos' : 'pnl-neg' %}
+                    {% set bar_pct = t.open_progress_pct %}
+                    {% set bar_w = bar_pct is null ? 0 : (bar_pct < 0 ? 0 : (bar_pct > 100 ? 100 : bar_pct)) %}
+                    {% set bar_state = t.open_progress_state ? t.open_progress_state : '' %}
+                    {% set tooltip = 'Cur: ' ~ (t.open_current_price|number_format(6)) ~ ' | BE: ' ~ (t.open_be_price|number_format(6)) %}
+                    <div class="pnl-cell" title="{{ tooltip }}">
+                        <span class="pnl-num {{ pnlCls }}">
+                            {{ pnlU >= 0 ? '+' : '' }}{{ pnlU|number_format(2) }} USDT
+                            ({{ pnlP >= 0 ? '+' : '' }}{{ pnlP|number_format(1) }}%)
+                            {%- if t.trailing_active %} <span title="Trailing-стоп активирован" style="color:#3ce05a;font-weight:700;">✓</span>{% endif %}
+                        </span>
+                        {% if bar_state %}
+                        <div class="pnl-bar-row">
+                            <span class="pnl-bar state-{{ bar_state }}"><i style="width:{{ bar_w }}%"></i></span>
+                            <span>{{ bar_pct|number_format(0) }}%</span>
+                        </div>
+                        {% endif %}
+                    </div>
+                {% else %}
+                    {% set pnl = t.pos_pnl is not null ? t.pos_pnl : t.realized_pnl_usdt %}
+                    {% if pnl is not null %}
+                        <span class="{{ pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                            {{ pnl >= 0 ? '+' : '' }}{{ pnl|number_format(4) }}
+                        </span>
+                    {% else %}—{% endif %}
+                {% endif %}
+            </td>
+            <td>
+                <a href="/trades/{{ t.id }}" class="trade-link">Detail</a>
+                {% if t.status in ['OPEN', 'AVERAGED', 'PENDING_CONDITIONAL'] %}
+                    <br>
+                    <button type="button" class="btn-close-trade" data-trade-id="{{ t.id }}"
+                            data-status="{{ t.status }}" data-symbol="{{ t.symbol }}"
+                            title="Закрыть позицию вручную по текущей цене">Закрыть</button>
+                {% elseif t.status == 'CANCELLED' and t.entry_ref is not null and t.sl_init is not null and t.tp_init is not null %}
+                    {# v0.8.0.12: выставить вновь conditional взамен Отмены #}
+                    <br>
+                    <button type="button" class="btn-restore-trade" data-trade-id="{{ t.id }}"
+                            data-symbol="{{ t.symbol }}" data-side="{{ t.side }}"
+                            title="Выставить вновь conditional ордер по тем же параметрам">Восстановить</button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    {# v0.8.0.9: пагинация — по 50 на страницу #}
+    {% if total_pages > 1 %}
+    <div class="pagination" style="display:flex;gap:6px;align-items:center;justify-content:center;margin:14px 0;flex-wrap:wrap;">
+        {% set base = '/trades?exchange=' ~ filter_exchange|url_encode ~ '&status=' ~ filter_status|url_encode ~ '&symbol=' ~ filter_symbol|url_encode ~ (filter_account is not null ? ('&account=' ~ filter_account) : '') ~ (filter_period_enabled ? ('&period=1&df=' ~ filter_date_field ~ '&from=' ~ filter_from ~ '&to=' ~ filter_to) : '') ~ '&sort=' ~ sort_key ~ '&dir=' ~ sort_dir %}
+        <style>
+            .pagination a, .pagination span { padding:4px 10px; border:1px solid #344; color:#cde; text-decoration:none; font-size:12px; border-radius:3px; }
+            .pagination a:hover { background:#234; }
+            .pagination .active { background:#2d5da8; color:#fff; border-color:#2d5da8; }
+            .pagination .disabled { color:#556; border-color:#223; cursor:not-allowed; }
+        </style>
+        {% if page > 1 %}
+            <a href="{{ base }}&page=1" title="Первая">«</a>
+            <a href="{{ base }}&page={{ page - 1 }}" title="Предыдущая">‹</a>
+        {% else %}
+            <span class="disabled">«</span>
+            <span class="disabled">‹</span>
+        {% endif %}
+        {% set from_p = max(1, page - 3) %}
+        {% set to_p   = min(total_pages, page + 3) %}
+        {% if from_p > 1 %}<span class="disabled">…</span>{% endif %}
+        {% for p in from_p..to_p %}
+            {% if p == page %}
+                <span class="active">{{ p }}</span>
+            {% else %}
+                <a href="{{ base }}&page={{ p }}">{{ p }}</a>
+            {% endif %}
+        {% endfor %}
+        {% if to_p < total_pages %}<span class="disabled">…</span>{% endif %}
+        {% if page < total_pages %}
+            <a href="{{ base }}&page={{ page + 1 }}" title="Следующая">›</a>
+            <a href="{{ base }}&page={{ total_pages }}" title="Последняя">»</a>
+        {% else %}
+            <span class="disabled">›</span>
+            <span class="disabled">»</span>
+        {% endif %}
+        <span style="color:#889;font-size:11px;margin-left:8px;">стр. {{ page }} из {{ total_pages }} · всего {{ total }} записей</span>
+    </div>
+    {% endif %}
+    {% endif %}
+    </div> {# /#trades-content #}
+
+{# v0.9.0-step9: футер с меткой последнего обновления. #}
+<div style="color:#555;font-size:11px;text-align:center;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;">
+    <span>Обновлено: <span id="last-refresh-at">—</span></span>
+    {# v0.8.0.13: принудительный запуск cron_minute — обновляет все активные позиции сейчас #}
+    <button type="button" id="btn-run-cron" class="btn-run-cron"
+            title="Принудительный запуск cron_minute (синхронизация с биржей)">
+        ↻ cron_minute
+    </button>
+</div>
+
+<script>
+(function(){
+    // ── Flash из cookie ──
+    function readCookie(name){
+        var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return m ? decodeURIComponent(m[1]) : null;
+    }
+    var flashRaw = readCookie('manual_flash');
+    if (flashRaw){
+        try {
+            var f = JSON.parse(flashRaw);
+            var div = document.createElement('div');
+            div.className = 'flash ' + (f.ok ? 'flash-ok' : 'flash-error');
+            div.textContent = f.msg || (f.ok ? 'OK' : 'Ошибка');
+            document.getElementById('manual-flash').appendChild(div);
+            // Очистить cookie чтобы не показывать при авто-рефреше
+            document.cookie = 'manual_flash=; Path=/; Max-Age=0';
+            // Если ошибка — развернуть форму обратно
+            if (!f.ok) document.getElementById('manual-entry').open = true;
+        } catch(e){}
+    }
+
+    // ── Валидация формы s2 ──
+    var form = document.getElementById('manual-form');
+    if (!form) return;
+
+    var symEl   = document.getElementById('m-symbol');
+    var sideEl  = document.getElementById('m-side');
+    var entryEl = document.getElementById('m-entry');
+    var slEl    = document.getElementById('m-sl');
+    var tpEl    = document.getElementById('m-tp');
+    var btn     = document.getElementById('m-submit');
+    var globErr = document.getElementById('m-global-error');
+    var symHint = document.getElementById('m-symbol-hint');
+    var slHint  = document.getElementById('m-sl-hint');
+    var tpHint  = document.getElementById('m-tp-hint');
+
+    function setHint(el, text, cls){
+        if (!el) return;
+        el.textContent = text || '';
+        el.className   = 'form-hint' + (cls ? ' ' + cls : '');
+    }
+    function mark(el, bad){ el.classList.toggle('invalid', !!bad); }
+
+    var lastSymCheck = '';
+    var symOk = false;
+    function checkSymbol(){
+        var s = symEl.value.trim();
+        if (s.length < 2 || !/^[A-Za-z0-9]{2,20}$/.test(s)) {
+            mark(symEl, true); symOk = false; setHint(symHint, '2–20 символов, латиница/цифры', 'error');
+            updateBtn(); return;
+        }
+        if (s === lastSymCheck) { updateBtn(); return; }
+        lastSymCheck = s;
+        setHint(symHint, 'проверяем на бирже…', '');
+        fetch('/manual/check-symbol?symbol=' + encodeURIComponent(s))
+            .then(function(r){ return r.json().then(function(j){ return {status:r.status, body:j}; }); })
+            .then(function(res){
+                if (res.status === 200 && res.body.ok) {
+                    var note = '✓ ' + res.body.normalized;
+                    if (res.body.last_price) note += ' · last: ' + res.body.last_price;
+                    if (res.body.max_leverage) note += ' · maxLev: ' + res.body.max_leverage + 'x';
+                    setHint(symHint, note, 'ok');
+                    mark(symEl, false); symOk = true;
+                } else {
+                    setHint(symHint, res.body.error || 'не найден', 'error');
+                    mark(symEl, true); symOk = false;
+                }
+                updateBtn();
+            })
+            .catch(function(e){
+                setHint(symHint, 'ошибка проверки', 'error');
+                mark(symEl, true); symOk = false; updateBtn();
+            });
+    }
+
+    function validateOrder(){
+        var side  = sideEl.value;
+        var entry = parseFloat(entryEl.value);
+        var sl    = parseFloat(slEl.value);
+        var tp    = parseFloat(tpEl.value);
+        var ok = true;
+        var msg = '';
+
+        if (!isFinite(entry) || entry <= 0) { mark(entryEl, true); ok = false; }
+        else mark(entryEl, false);
+
+        if (!isFinite(sl) || sl <= 0) { mark(slEl, true); ok = false; }
+        if (!isFinite(tp) || tp <= 0) { mark(tpEl, true); ok = false; }
+
+        if (ok && isFinite(entry) && isFinite(sl) && isFinite(tp)) {
+            if (side === 'long') {
+                if (!(tp > entry && entry > sl)) { ok = false; msg = 'Нужно: TP > Entry > SL'; mark(tpEl, true); mark(slEl, true); }
+                else { mark(tpEl, false); mark(slEl, false); }
+                setHint(slHint, 'SL < entry', '');
+                setHint(tpHint, 'TP > entry', '');
+            } else {
+                if (!(sl > entry && entry > tp)) { ok = false; msg = 'Нужно: SL > Entry > TP'; mark(tpEl, true); mark(slEl, true); }
+                else { mark(tpEl, false); mark(slEl, false); }
+                setHint(slHint, 'SL > entry', '');
+                setHint(tpHint, 'TP < entry', '');
+            }
+        }
+
+        globErr.textContent = msg;
+        return ok;
+    }
+
+    // v0.9.0-step4c: валидация мультиселекта аккаунтов.
+    // Для testnet/live требуется ≥ 1 аккаунт. Для paper блока нет — accountsOk всегда true.
+    var accCheckboxes = Array.prototype.slice.call(form.querySelectorAll('.m-acc-checkbox'));
+    var accAllToggle  = document.getElementById('m-acc-all');
+    var hasAccBlock   = form.querySelector('.manual-accounts-block') !== null;
+
+    function accountsOk(){
+        if (!hasAccBlock) return true; // paper
+        if (accCheckboxes.length === 0) return false; // нет enabled аккаунтов
+        return accCheckboxes.some(function(cb){ return cb.checked; });
+    }
+    function syncAllToggle(){
+        if (!accAllToggle || accCheckboxes.length === 0) return;
+        var allChecked = accCheckboxes.every(function(cb){ return cb.checked; });
+        accAllToggle.checked = allChecked;
+    }
+
+    function updateBtn(){
+        var orderOk = validateOrder();
+        var accOk   = accountsOk();
+        btn.disabled = !(symOk && orderOk && accOk);
+        if (!accOk && hasAccBlock) {
+            if (accCheckboxes.length === 0) {
+                globErr.textContent = 'Нет enabled аккаунтов';
+            } else {
+                globErr.textContent = 'Выберите хотя бы один аккаунт';
+            }
+        }
+    }
+
+    var symTimer = null;
+    symEl.addEventListener('input', function(){
+        symOk = false; updateBtn();
+        clearTimeout(symTimer);
+        symTimer = setTimeout(checkSymbol, 400);
+    });
+    sideEl.addEventListener('change', updateBtn);
+    [entryEl, slEl, tpEl].forEach(function(el){ el.addEventListener('input', updateBtn); });
+
+    accCheckboxes.forEach(function(cb){
+        cb.addEventListener('change', function(){ syncAllToggle(); updateBtn(); });
+    });
+    if (accAllToggle) {
+        accAllToggle.addEventListener('change', function(){
+            var on = accAllToggle.checked;
+            accCheckboxes.forEach(function(cb){ cb.checked = on; });
+            updateBtn();
+        });
+    }
+
+    // При submit — финальная валидация
+    form.addEventListener('submit', function(e){
+        if (!validateOrder() || !symOk || !accountsOk()) { e.preventDefault(); }
+    });
+
+    // ── v0.9.0-step9: AJAX-рефреш в фоне + авто-poll 30с ──
+    // Раньше работал window.location.reload() каждые 60с — это блокировало UI
+    // пока GET /trades отвечал. Теперь делаем fetch(URL) в фоне, парсим
+    // ответ как HTML, извлекаем #trades-content + #equity-widget + counts
+    // и заменяем их в текущем DOM. Фильтры в UI остаются доступными.
+    var details = document.getElementById('manual-entry');
+    var refreshLabel = document.getElementById('refresh-status');
+    var refreshBtn = document.getElementById('btn-refresh-trades');
+    var lastRefreshEl = document.getElementById('last-refresh-at');
+    var POLL_MS = 30000;
+    var pollTimer = null;
+    var inFlight = false;
+
+    function pad2(n){ return n < 10 ? '0' + n : '' + n; }
+    function fmtTime(d){
+        return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    }
+    function formHasInput(){
+        return [symEl, entryEl, slEl, tpEl].some(function(el){
+            return el && el.value && el.value.trim() !== '';
+        });
+    }
+    function shouldHoldRefresh(){
+        return (details && details.open) || formHasInput();
+    }
+
+    function setStatus(text, color){
+        if (refreshLabel) {
+            refreshLabel.textContent = text;
+            refreshLabel.style.color = color || '#889';
+        }
+    }
+    function setBtnState(busy){
+        if (refreshBtn) {
+            refreshBtn.disabled = busy;
+            refreshBtn.textContent = busy ? '… обновляю' : 'Обновить';
+            refreshBtn.style.opacity = busy ? '0.6' : '1';
+            refreshBtn.style.cursor = busy ? 'wait' : 'pointer';
+        }
+    }
+
+    function ajaxRefresh(opts){
+        opts = opts || {};
+        if (inFlight) return;
+        if (!opts.manual && shouldHoldRefresh()) {
+            setStatus('Авто-обновление приостановлено — форма ручного ввода используется', '#ffcc44');
+            return;
+        }
+        inFlight = true;
+        setBtnState(true);
+        setStatus('Обновляю…', '#cfe2ff');
+
+        // Собираем URL из текущих query-параметров, чтобы фильтры сохранялись.
+        var url = window.location.pathname + window.location.search;
+        // Баст кэша.
+        url += (url.indexOf('?') >= 0 ? '&' : '?') + '_ajax=' + Date.now();
+
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' })
+            .then(function(r){
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.text();
+            })
+            .then(function(html){
+                var parser = new DOMParser();
+                var doc = parser.parseFromString(html, 'text/html');
+                var fragments = [
+                    'trades-content',
+                    'eq-widget',          // equity widget
+                    'counts-block'        // счётчики (если есть)
+                ];
+                fragments.forEach(function(id){
+                    var fresh = doc.getElementById(id);
+                    var cur = document.getElementById(id);
+                    if (fresh && cur) {
+                        cur.innerHTML = fresh.innerHTML;
+                    }
+                });
+                var now = new Date();
+                if (lastRefreshEl) lastRefreshEl.textContent = fmtTime(now);
+                setStatus('Авто-обновление каждые 30 сек', '#889');
+            })
+            .catch(function(err){
+                setStatus('Ошибка обновления: ' + err.message, '#ff8a6a');
+            })
+            .then(function(){
+                inFlight = false;
+                setBtnState(false);
+            });
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function(){ ajaxRefresh({ manual: true }); });
+    }
+    // Стартовый временной штамп: покажем что страница только что открыта.
+    if (lastRefreshEl) lastRefreshEl.textContent = fmtTime(new Date());
+    // Авто-poll.
+    pollTimer = setInterval(function(){ ajaxRefresh(); }, POLL_MS);
+
+    // ── v0.9.0-step9 task2: toggle полей фильтра периода ──
+    var periodToggle = document.getElementById('f-period-toggle');
+    if (periodToggle) {
+        var periodFields = ['f-period-fields-df','f-period-fields-from','f-period-fields-to']
+            .map(function(id){ return document.getElementById(id); })
+            .filter(function(el){ return !!el; });
+        var sync = function(){
+            var on = periodToggle.checked;
+            periodFields.forEach(function(el){ el.style.display = on ? '' : 'none'; });
+        };
+        periodToggle.addEventListener('change', sync);
+        sync();
+    }
+
+    // ── v0.8.0.13: кнопка принудительного запуска cron_minute ──
+    var btnRunCron = document.getElementById('btn-run-cron');
+    if (btnRunCron) {
+        btnRunCron.addEventListener('click', function(){
+            var orig = btnRunCron.textContent;
+            btnRunCron.disabled = true;
+            btnRunCron.textContent = '… выполняется';
+            if (refreshLabel) {
+                refreshLabel.textContent = 'Ручной запуск cron_minute…';
+                refreshLabel.style.color = '#cfe2ff';
+            }
+            fetch('/admin/cron-minute/run', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    '{}',
+            }).then(function(r){
+                return r.json().then(function(j){ return { status: r.status, body: j }; });
+            }).then(function(res){
+                if (res.status === 200 && res.body && res.body.ok) {
+                    // v0.9.0-step9: вместо reload — вызываем AJAX refresh, UI не блокируется.
+                    btnRunCron.disabled = false;
+                    btnRunCron.textContent = orig;
+                    ajaxRefresh({ manual: true });
+                } else {
+                    btnRunCron.disabled = false;
+                    btnRunCron.textContent = orig;
+                    var msg = (res.body && (res.body.error || res.body.output)) || ('HTTP ' + res.status);
+                    alert('Ошибка cron_minute:\n' + msg);
+                    if (refreshLabel) refreshLabel.textContent = 'Ошибка ручного запуска cron_minute';
+                }
+            }).catch(function(err){
+                btnRunCron.disabled = false;
+                btnRunCron.textContent = orig;
+                alert('Сетевая ошибка: ' + err);
+            });
+        });
+    }
+
+    // ── v0.7.1 #2: цветовые метки ──
+    var openPalette = null;
+    var COLORS = ['', 'yellow', 'green', 'red', 'blue', 'purple'];
+
+    function closePalette(){
+        if (openPalette) {
+            openPalette.remove();
+            openPalette = null;
+        }
+    }
+
+    document.addEventListener('click', function(ev){
+        var row = ev.target.closest && ev.target.closest('.sym-row');
+        if (!row) {
+            if (openPalette && !ev.target.closest('.label-palette')) closePalette();
+            return;
+        }
+        ev.stopPropagation();
+        closePalette();
+
+        var tradeId = row.getAttribute('data-trade-id');
+        var cell    = row.parentElement; // td.sym-cell
+        var pal = document.createElement('div');
+        pal.className = 'label-palette open';
+        COLORS.forEach(function(c){
+            var d = document.createElement('span');
+            d.className = 'pal-dot ' + (c === '' ? 'pal-none' : ('pal-' + c));
+            d.title = c === '' ? 'Без метки' : c;
+            d.addEventListener('click', function(e){
+                e.stopPropagation();
+                applyLabel(tradeId, c, row);
+                closePalette();
+            });
+            pal.appendChild(d);
+        });
+        cell.appendChild(pal);
+        openPalette = pal;
+    });
+
+    function applyLabel(tradeId, label, row){
+        // optimistic UI
+        var dot = row.querySelector('.sym-dot');
+        if (dot) {
+            dot.className = 'sym-dot' + (label ? ' lbl-' + label : '');
+            dot.setAttribute('data-current', label);
+        }
+        var fd = new FormData();
+        fd.append('label', label);
+        fetch('/trades/' + tradeId + '/label', {
+            method: 'POST',
+            body:   fd,
+        }).then(function(r){
+            if (!r.ok && dot) {
+                // откат при ошибке
+                dot.className = 'sym-dot';
+            }
+        }).catch(function(){
+            if (dot) dot.className = 'sym-dot';
+        });
+    }
+
+    /* v0.8.0.12: кнопка «Восстановить» — выставить вновь conditional для CANCELLED. */
+    document.addEventListener('click', function(e){
+        var btn = e.target.closest && e.target.closest('.btn-restore-trade');
+        if (!btn) return;
+        var tradeId = btn.getAttribute('data-trade-id');
+        var symbol  = btn.getAttribute('data-symbol') || '';
+        var side    = btn.getAttribute('data-side')   || '';
+        if (!confirm('Выставить вновь conditional по ' + symbol + ' ' + side + '? При пересечении SL ордер не будет отменён автоматически до открытия позиции.')) return;
+
+        btn.disabled = true;
+        var origText = btn.textContent;
+        btn.textContent = '…';
+
+        fetch('/trades/' + tradeId + '/restore', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    '{}',
+        }).then(function(r){
+            return r.json().then(function(j){ return { status: r.status, body: j }; });
+        }).then(function(res){
+            if (res.status === 200 && res.body && res.body.ok) {
+                window.location.reload();
+            } else {
+                btn.disabled = false;
+                btn.textContent = origText;
+                alert('Ошибка: ' + (res.body && (res.body.error || res.body.msg) || res.status));
+            }
+        }).catch(function(err){
+            btn.disabled = false;
+            btn.textContent = origText;
+            alert('Сетевая ошибка: ' + err);
+        });
+    });
+
+    /* v0.7.3: кнопка «Закрыть» — ручное закрытие активной позиции. */
+    document.addEventListener('click', function(e){
+        var btn = e.target.closest && e.target.closest('.btn-close-trade');
+        if (!btn) return;
+        var tradeId = btn.getAttribute('data-trade-id');
+        var symbol  = btn.getAttribute('data-symbol')  || '';
+        var status  = btn.getAttribute('data-status')  || '';
+        var action  = (status === 'PENDING_CONDITIONAL') ? 'Отменить ожидающий ордер' : 'Закрыть позицию по текущей цене';
+        if (!confirm(action + ' #' + tradeId + ' (' + symbol + ', ' + status + ')?')) return;
+
+        btn.disabled = true;
+        var origText = btn.textContent;
+        btn.textContent = '…';
+
+        fetch('/trades/' + tradeId + '/close', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    '{}',
+        }).then(function(r){
+            return r.json().then(function(j){ return { status: r.status, body: j }; });
+        }).then(function(res){
+            if (res.status === 200 && res.body && res.body.ok) {
+                // Перезагружаем страницу, чтобы увидеть обновлённый статус и PnL.
+                window.location.reload();
+            } else {
+                btn.disabled = false;
+                btn.textContent = origText;
+                alert('Ошибка: ' + (res.body && (res.body.error || res.body.msg) || res.status));
+            }
+        }).catch(function(err){
+            btn.disabled = false;
+            btn.textContent = origText;
+            alert('Сетевая ошибка: ' + err);
+        });
+    });
+})();
+</script>
+</main>
+{% endblock %}

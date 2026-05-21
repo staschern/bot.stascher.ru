@@ -1,0 +1,48 @@
+{% extends "_layout.twig" %}
+{% block title %}Вход — Bybit Futures Bot{% endblock %}
+{% block body %}
+<main style="max-width: 400px; margin-top: 80px;">
+    <div class="card">
+        <h2 style="text-align:center; font-size: 20px; color: #fff;">Bybit Futures Bot</h2>
+        <p style="text-align:center; color:#aab; margin-bottom: 24px;">Вход в систему</p>
+
+        {% if error %}
+            <div style="background:#5a2020; border:1px solid #8a3030; padding:10px 14px; border-radius:6px; margin-bottom:16px; font-size:13px;">
+                {% if error == 'invalid_credentials' %}
+                    Неверный логин или пароль.
+                {% elseif error == 'invalid_totp' %}
+                    Неверный код 2FA.
+                {% elseif error == 'rate_limited' %}
+                    Слишком много неудачных попыток. Подождите 15 минут.
+                {% elseif error == 'totp_not_configured' %}
+                    Двухфакторная аутентификация не настроена. Запустите cli.php auth:init.
+                {% else %}
+                    Ошибка входа: {{ error }}
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <form method="post" action="/login">
+            <label style="display:block; margin-bottom:14px;">
+                <span style="display:block; font-size:12px; color:#aab; margin-bottom:6px;">Логин</span>
+                <input type="text" name="username" autofocus required
+                       style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:4px; color:#fff; font-size:14px;">
+            </label>
+            <label style="display:block; margin-bottom:14px;">
+                <span style="display:block; font-size:12px; color:#aab; margin-bottom:6px;">Пароль</span>
+                <input type="password" name="password" required
+                       style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:4px; color:#fff; font-size:14px;">
+            </label>
+            <label style="display:block; margin-bottom:20px;">
+                <span style="display:block; font-size:12px; color:#aab; margin-bottom:6px;">Код 2FA (TOTP)</span>
+                <input type="text" name="totp" required pattern="[0-9]{6}" maxlength="6" inputmode="numeric"
+                       style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:4px; color:#fff; font-size:14px; letter-spacing:4px; text-align:center;">
+            </label>
+            <button type="submit"
+                    style="width:100%; padding:12px; background:#3a6dba; color:#fff; border:none; border-radius:4px; font-size:14px; font-weight:500; cursor:pointer;">
+                Войти
+            </button>
+        </form>
+    </div>
+</main>
+{% endblock %}

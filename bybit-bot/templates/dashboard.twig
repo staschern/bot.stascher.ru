@@ -1,0 +1,63 @@
+{% extends "_layout.twig" %}
+{% block title %}Дашборд — Bybit Futures Bot{% endblock %}
+{% block head %}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    nav a.active { color:#6a9eff; font-weight:600; }
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard" class="active">Dashboard</a>
+    <a href="/trades">Trades</a>
+    <a href="/stats">Результаты</a>
+    <a href="/events">События</a>
+    <a href="/signals">Сигналы</a>
+    <a href="/accounts">Аккаунты</a>
+    <a href="/settings">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>Bybit Futures Bot
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+    </h1>
+    <div class="right">
+        <span style="color:#666;">v{{ app_version }}</span>
+    </div>
+</header>
+<main>
+    <div class="card">
+        <h2>Дашборд</h2>
+        {% if placeholder %}
+            <p class="placeholder">
+                Перейдите в <a href="/trades" style="color:#6a9eff;">Trades</a> для просмотра сделок
+                или в <a href="/settings" style="color:#6a9eff;">Settings</a> для управления настройками.
+            </p>
+            <ul style="color:#aab; font-size:13px; line-height: 1.8;">
+                <li>Депозит: —</li>
+                <li>Открытых позиций: —</li>
+                <li>Conditional-ордеров: —</li>
+                <li>P/L день / неделя / месяц: —</li>
+            </ul>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Статус системы</h2>
+        <p>
+            <a href="/healthz" target="_blank" style="color:#6a9eff;">/healthz</a> —
+            проверка свежести cron-запусков (см. spec.md §15).
+        </p>
+        <p style="font-size:12px;color:#668;">
+            Режим: <strong style="color:#e0e0e0;">{{ mode }}</strong>.
+            {% if mode == 'pause' %}
+            <span style="color:#ffcc44;">Pause: новые сигналы не обрабатываются.</span>
+            {% elseif mode == 'live' %}
+            <span style="color:#ff6a6a;">Live: торговля реальными деньгами!</span>
+            {% endif %}
+        </p>
+    </div>
+</main>
+{% endblock %}

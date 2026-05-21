@@ -1,0 +1,249 @@
+{% extends "_layout.twig" %}
+{% block title %}Результаты — Bybit Futures Bot{% endblock %}
+{% block head %}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    nav a.active { color:#6a9eff; font-weight:600; }
+
+    .stats-grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    @media (max-width: 920px) { .stats-grid { grid-template-columns: 1fr; } }
+
+    table.stats-table { width:100%; border-collapse: collapse; font-size:12px; }
+    table.stats-table th, table.stats-table td {
+        padding:5px 8px; border-bottom:1px solid #2a2a2a; text-align:right;
+    }
+    table.stats-table th { background:#1c1c1c; color:#aab; text-align:right; font-weight:600; }
+    table.stats-table th:first-child, table.stats-table td:first-child { text-align:left; }
+    table.stats-table tbody tr:nth-child(odd)  { background:#1a1a1a; }
+    table.stats-table tbody tr:nth-child(even) { background:#161616; }
+    table.stats-table tfoot td { background:#222; color:#e0e0e0; font-weight:600; border-top:2px solid #333; }
+
+    .pnl-pos { color:#6aff6a; }
+    .pnl-neg { color:#ff6a6a; }
+    .wr-good { color:#6aff6a; }
+    .wr-bad  { color:#ff6a6a; }
+    .wr-mid  { color:#ffcc44; }
+
+    .totals-box {
+        display:flex; flex-wrap:wrap; gap:18px;
+        padding:10px 14px; background:#1a1a1a; border:1px solid #2a2a2a;
+        border-radius:4px; margin-bottom:14px;
+    }
+    .totals-box .tb-item { display:flex; flex-direction:column; min-width:90px; }
+    .totals-box .tb-label { font-size:11px; color:#779; }
+    .totals-box .tb-value { font-size:15px; color:#e0e0e0; font-weight:600; }
+
+    .chart-card { padding:10px 14px 14px; }
+    .chart-card h3 { margin:0 0 8px 0; font-size:13px; color:#aab; font-weight:500; }
+
+    .mode-filter { font-size:12px; margin-bottom:10px; }
+    .mode-filter select { background:#1a1a1a; color:#e0e0e0; border:1px solid #333; padding:3px 6px; }
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/trades">Trades</a>
+    <a href="/stats" class="active">Результаты</a>
+    <a href="/events">События</a>
+    <a href="/signals">Сигналы</a>
+    <a href="/accounts">Аккаунты</a>
+    <a href="/settings">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>Bybit Futures Bot — Результаты
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+    </h1>
+    <div class="right"><span style="color:#666;">v{{ app_version }}</span></div>
+</header>
+<main>
+
+<div class="card">
+    <form method="GET" action="/stats" class="mode-filter">
+        <label>Режим:
+            <select name="mode" onchange="this.form.submit()">
+                <option value="paper"   {{ filter_mode == 'paper'   ? 'selected' : '' }}>paper</option>
+                <option value="testnet" {{ filter_mode == 'testnet' ? 'selected' : '' }}>testnet</option>
+                <option value="live"    {{ filter_mode == 'live'    ? 'selected' : '' }}>live</option>
+            </select>
+        </label>
+        {# v0.9.0-step7 task6: фильтр по аккаунту #}
+        <label style="margin-left:14px;">Аккаунт:
+            <select name="account" onchange="this.form.submit()">
+                <option value="" {{ filter_account is null ? 'selected' : '' }}>— все —</option>
+                {% for a in all_accounts %}
+                    <option value="{{ a.id }}" {{ filter_account == a.id ? 'selected' : '' }}>#{{ a.id }} · {{ a.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <span style="color:#666;margin-left:10px;">D0 = {{ d0|number_format(2) }} USDT</span>
+        {# v0.9.0-step9 task4 #}
+        <button type="button" id="btn-backfill-snapshots"
+                style="margin-left:14px;background:#1a1a1a;color:#9bd;border:1px solid #335;
+                       padding:3px 10px;cursor:pointer;font-size:12px;">
+            Пересчитать snapshots
+        </button>
+        <span id="backfill-status" style="color:#779;margin-left:8px;font-size:11px;"></span>
+    </form>
+
+    {# ── Итого за всё время ── #}
+    {% if totals and totals.trades_count > 0 %}
+    <div class="totals-box">
+        <div class="tb-item">
+            <span class="tb-label">Сделок</span>
+            <span class="tb-value">{{ totals.trades_count }}</span>
+        </div>
+        <div class="tb-item">
+            <span class="tb-label">Win / Loss</span>
+            <span class="tb-value">
+                <span class="pnl-pos">{{ totals.wins }}</span> /
+                <span class="pnl-neg">{{ totals.losses }}</span>
+            </span>
+        </div>
+        <div class="tb-item">
+            <span class="tb-label">Win rate</span>
+            {% set wr = totals.win_rate %}
+            {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+            <span class="tb-value {{ wcls }}">{{ wr|number_format(1) }}%</span>
+        </div>
+        <div class="tb-item">
+            <span class="tb-label">Gross profit</span>
+            <span class="tb-value pnl-pos">+{{ totals.gross_profit|number_format(2) }}</span>
+        </div>
+        <div class="tb-item">
+            <span class="tb-label">Gross loss</span>
+            <span class="tb-value pnl-neg">{{ totals.gross_loss|number_format(2) }}</span>
+        </div>
+        <div class="tb-item">
+            <span class="tb-label">Net PnL</span>
+            <span class="tb-value {{ totals.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                {{ totals.net_pnl >= 0 ? '+' : '' }}{{ totals.net_pnl|number_format(2) }}
+            </span>
+        </div>
+    </div>
+    {% else %}
+    <p style="color:#779;font-size:12px;">Закрытых сделок в режиме <strong>{{ filter_mode }}</strong> пока нет.</p>
+    {% endif %}
+
+    {# ── График equity ── #}
+    <div class="chart-card">
+        <h3>Кривая equity (накопленный realized PnL + D0)</h3>
+        {{ equity_svg|raw }}
+    </div>
+</div>
+
+<div class="stats-grid">
+    {# ── По неделям ── #}
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;font-size:13px;color:#aab;">По неделям (последние 26)</h3>
+        {% if weekly|length > 0 %}
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Неделя</th>
+                    <th>Депозит начало</th>
+                    <th>Сделок</th>
+                    <th>W/L</th>
+                    <th>WR%</th>
+                    <th>Net PnL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in weekly %}
+                <tr>
+                    <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
+                    <td>{% if r.deposit_start_available %}{{ r.deposit_start|number_format(2) }}{% else %}<span style="color:#555;">—</span>{% endif %}</td>
+                    <td>{{ r.trades_count }}</td>
+                    <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
+                    {% set wr = r.win_rate %}
+                    {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                    <td class="{{ wcls }}">{{ wr|number_format(1) }}</td>
+                    <td class="{{ r.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                        {{ r.net_pnl >= 0 ? '+' : '' }}{{ r.net_pnl|number_format(2) }} USDT
+                        {% if r.deposit_start_available %}
+                        <span style="font-size:11px;opacity:0.85;">
+                            ({{ r.pnl_pct >= 0 ? '+' : '' }}{{ r.pnl_pct|number_format(2) }}%)
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:#666;font-size:12px;">Нет данных.</p>
+        {% endif %}
+    </div>
+
+    {# ── По месяцам ── #}
+    <div class="card">
+        <h3 style="margin:0 0 10px 0;font-size:13px;color:#aab;">По месяцам (последние 24)</h3>
+        {% if monthly|length > 0 %}
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Месяц</th>
+                    <th>Депозит начало</th>
+                    <th>Сделок</th>
+                    <th>W/L</th>
+                    <th>WR%</th>
+                    <th>Net PnL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in monthly %}
+                <tr>
+                    <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
+                    <td>{% if r.deposit_start_available %}{{ r.deposit_start|number_format(2) }}{% else %}<span style="color:#555;">—</span>{% endif %}</td>
+                    <td>{{ r.trades_count }}</td>
+                    <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
+                    {% set wr = r.win_rate %}
+                    {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                    <td class="{{ wcls }}">{{ wr|number_format(1) }}</td>
+                    <td class="{{ r.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                        {{ r.net_pnl >= 0 ? '+' : '' }}{{ r.net_pnl|number_format(2) }} USDT
+                        {% if r.deposit_start_available %}
+                        <span style="font-size:11px;opacity:0.85;">
+                            ({{ r.pnl_pct >= 0 ? '+' : '' }}{{ r.pnl_pct|number_format(2) }}%)
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:#666;font-size:12px;">Нет данных.</p>
+        {% endif %}
+    </div>
+</div>
+
+</main>
+<script>
+(function(){
+    var btn = document.getElementById('btn-backfill-snapshots');
+    var stat = document.getElementById('backfill-status');
+    if (!btn) return;
+    btn.addEventListener('click', function(){
+        if (!confirm('Пересчитать snapshots из истории сделок? Это перезапишет все записи equity_snapshots.')) return;
+        btn.disabled = true;
+        stat.textContent = 'Работаю…';
+        fetch('/stats/backfill-snapshots', {method:'POST', credentials:'same-origin'})
+            .then(function(r){ return r.json(); })
+            .then(function(j){
+                if (j && j.ok) {
+                    stat.textContent = 'ОК, записано: ' + (j.written|0);
+                    setTimeout(function(){ location.reload(); }, 800);
+                } else {
+                    stat.textContent = 'Ошибка: ' + (j && j.error ? j.error : 'unknown');
+                }
+            })
+            .catch(function(e){ stat.textContent = 'Ошибка: ' + e; })
+            .finally(function(){ btn.disabled = false; });
+    });
+})();
+</script>
+{% endblock %}

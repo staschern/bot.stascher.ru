@@ -1,0 +1,225 @@
+{% extends "_layout.twig" %}
+{% block title %}Аккаунты Bybit — Bybit Futures Bot{% endblock %}
+{% block head %}
+<style>
+    nav { background:#222; padding:8px 20px; border-bottom:1px solid #333; font-size:13px; }
+    nav a { color:#aab; text-decoration:none; margin-right:20px; }
+    nav a:hover { color:#fff; }
+    nav a.active { color:#6a9eff; font-weight:600; }
+    .form-group { margin-bottom:12px; }
+    .form-group label { display:block; font-size:12px; color:#889; margin-bottom:4px; }
+    .form-group input[type=text], .form-group input[type=password],
+    .form-group select {
+        background:#1a1a1a; border:1px solid #444; color:#e0e0e0; padding:6px 10px;
+        border-radius:4px; font-size:13px; width:100%; box-sizing:border-box;
+    }
+    .form-group input[type=text]:focus, .form-group input[type=password]:focus,
+    .form-group select:focus { border-color:#6a9eff; outline:none; }
+    .form-row { display:flex; gap:16px; flex-wrap:wrap; }
+    .form-row .form-group { flex:1; min-width:180px; }
+    .btn { padding:6px 14px; border:none; border-radius:4px; cursor:pointer; font-size:12px; }
+    .btn-primary { background:#2d5da8; color:#fff; }
+    .btn-primary:hover { background:#3668bf; }
+    .btn-danger { background:#7a2d2d; color:#fff; }
+    .btn-danger:hover { background:#9a3a3a; }
+    .btn-secondary { background:#444; color:#ccc; }
+    .btn-secondary:hover { background:#555; }
+    .btn-warn { background:#7a5d2d; color:#fff; }
+    .btn-warn:hover { background:#9a7a3a; }
+    .alert { padding:10px 16px; border-radius:4px; margin-bottom:16px; font-size:13px; }
+    .alert-ok  { background:#1e3a1e; border:1px solid #3a7a3a; color:#8fc88f; }
+    .alert-err { background:#3a1e1e; border:1px solid #7a3a3a; color:#c88f8f; }
+    .section-title { font-size:14px; font-weight:600; color:#6a9eff; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid #333; }
+    table.accounts { width:100%; border-collapse:collapse; font-size:13px; }
+    table.accounts th, table.accounts td { text-align:left; padding:10px 8px; border-bottom:1px solid #2f2f2f; vertical-align:top; }
+    table.accounts th { color:#889; font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:600; }
+    .badge-live    { background:#5a1f1f; color:#ffb0b0; }
+    .badge-testnet { background:#5a4a1f; color:#ffe0a0; }
+    .badge-on      { background:#1e4a1e; color:#a0e0a0; }
+    .badge-off     { background:#3a3a3a; color:#999; }
+    .badge-warn    { background:#5a4a1f; color:#ffe0a0; }
+    .name-edit { display:inline-flex; gap:6px; align-items:center; }
+    .name-edit input { width:160px; padding:4px 8px; font-size:13px; background:#1a1a1a; border:1px solid #444; color:#e0e0e0; border-radius:3px; }
+    .actions-cell form { display:inline-block; margin:0; }
+    .actions-cell { white-space:nowrap; }
+    .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size:12px; color:#9aa; }
+    .help { color:#779; font-size:11px; margin-top:4px; display:block; }
+    .key-block { background:#1a1a1a; border:1px dashed #333; padding:12px; border-radius:4px; margin-top:6px; }
+    summary { cursor:pointer; padding:4px 0; color:#6a9eff; font-size:12px; }
+    /* v0.9.0-step7 task5: per-strategy toggle */
+    .strat-toggles { white-space:nowrap; }
+    .strat-tog-form { display:inline-block; margin:0 2px 0 0; }
+    .strat-btn {
+        font-size:11px; padding:2px 6px; border-radius:3px;
+        font-family: ui-monospace, monospace; cursor:pointer;
+        border:1px solid #444; min-width:38px;
+    }
+    .strat-btn.on  { background:#1a3a1a; color:#6aff6a; border-color:#2a5a2a; }
+    .strat-btn.off { background:#2a1a1a; color:#aa6a6a; border-color:#5a2a2a; }
+    .strat-btn:hover { filter:brightness(1.25); }
+</style>
+{% endblock %}
+{% block body %}
+<nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/trades">Trades</a>
+    <a href="/stats">Результаты</a>
+    <a href="/events">События</a>
+    <a href="/signals">Сигналы</a>
+    <a href="/accounts" class="active">Аккаунты</a>
+    <a href="/settings">Settings</a>
+    <a href="/logout">Выйти</a>
+</nav>
+<header>
+    <h1>Аккаунты Bybit
+        <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+    </h1>
+    <div class="right"><span style="color:#666;">v{{ app_version }}</span></div>
+</header>
+<main>
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<div class="card">
+    <div class="section-title">Список аккаунтов</div>
+    {% if accounts is empty %}
+        <p style="color:#779; font-size:13px;">Аккаунтов пока нет. Создайте первый ниже.</p>
+    {% else %}
+    <table class="accounts">
+        <thead>
+        <tr>
+            <th>ID</th>
+            <th>Имя</th>
+            <th>Network</th>
+            <th>Включён</th>
+            <th title="По каждой стратегии отдельно: вкл/выкл участия в fan-out сигналов">Стратегии</th>
+            <th>API key</th>
+            <th>Открытых позиций</th>
+            <th style="width:260px;">Действия</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for a in accounts %}
+        <tr>
+            <td class="mono">#{{ a.id }}</td>
+            <td>
+                <form method="POST" action="/accounts/{{ a.id }}/rename" class="name-edit"
+                      onsubmit="return confirm('Переименовать аккаунт в \'' + this.name.value + '\'?');">
+                    <input type="text" name="name" value="{{ a.name }}" maxlength="64" required>
+                    <button class="btn btn-secondary" type="submit" title="Сохранить имя">↻</button>
+                </form>
+            </td>
+            <td><span class="badge badge-{{ a.network }}">{{ a.network }}</span></td>
+            <td>
+                {% if a.enabled %}<span class="badge badge-on">ON</span>{% else %}<span class="badge badge-off">OFF</span>{% endif %}
+            </td>
+            {# v0.9.0-step7 task5: per-strategy toggle s1/s2/s3 #}
+            <td class="strat-toggles">
+                {% for s in ['s1','s2','s3'] %}
+                    {% set sk = s ~ '_enabled' %}
+                    {% set son = a[sk] is defined ? a[sk] : 1 %}
+                    <form method="POST" action="/accounts/{{ a.id }}/toggle-strategy/{{ s }}" class="strat-tog-form">
+                        <button type="submit" class="strat-btn {{ son ? 'on' : 'off' }}"
+                                title="{{ s|upper }}: {{ son ? 'вкл' : 'выкл' }} — клик, чтобы переключить">
+                            {{ s }} {{ son ? '●' : '○' }}
+                        </button>
+                    </form>
+                {% endfor %}
+            </td>
+            <td class="mono">
+                {% if a.keys_configured %}
+                    {{ a.keys_mask }}
+                {% else %}
+                    <span class="badge badge-warn">НЕ НАСТРОЕНЫ</span>
+                {% endif %}
+            </td>
+            <td class="mono">{{ a.open_trades }}</td>
+            <td class="actions-cell">
+                <form method="POST" action="/accounts/{{ a.id }}/toggle">
+                    <button class="btn {{ a.enabled ? 'btn-secondary' : 'btn-primary' }}" type="submit"
+                            title="Влияет ТОЛЬКО на открытие новых ордеров. Старые сопровождаются всегда.">
+                        {{ a.enabled ? 'Выкл.' : 'Вкл.' }}
+                    </button>
+                </form>
+                <form method="POST" action="/accounts/{{ a.id }}/test">
+                    <button class="btn btn-secondary" type="submit"
+                            {% if not a.keys_configured %}disabled{% endif %}
+                            title="Тестовый запрос /v5/account/wallet-balance">Тест</button>
+                </form>
+                <form method="POST" action="/accounts/{{ a.id }}/archive"
+                      onsubmit="return confirm('Архивировать аккаунт \'{{ a.name|e('js') }}\'? Soft-delete, восстановить можно только через БД.');">
+                    <button class="btn btn-danger" type="submit"
+                            {% if a.open_trades > 0 %}disabled title="Сначала закройте {{ a.open_trades }} открытых позиций"{% else %}title="Soft-delete"{% endif %}>
+                        Архивировать
+                    </button>
+                </form>
+            </td>
+        </tr>
+        <tr>
+            <td></td>
+            <td colspan="7">
+                <details>
+                    <summary>Обновить ключи для «{{ a.name }}»</summary>
+                    <form method="POST" action="/accounts/{{ a.id }}/update-keys" class="key-block"
+                          onsubmit="return confirm('Заменить ключи аккаунта \'{{ a.name|e('js') }}\'? Перед записью будет выполнен тест /v5/account/wallet-balance.');">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>API Key</label>
+                                <input type="text" name="api_key" autocomplete="off" required>
+                            </div>
+                            <div class="form-group">
+                                <label>API Secret</label>
+                                <input type="password" name="api_secret" autocomplete="off" required>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" type="submit">Сохранить (с тестом)</button>
+                        <span class="help">Сеть: <b>{{ a.network }}</b>. Ключи будут записаны в data/secrets/account_{{ a.id }}.php (chmod 0600).</span>
+                    </form>
+                </details>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="section-title">Добавить новый аккаунт</div>
+    <form method="POST" action="/accounts/create"
+          onsubmit="return confirm('Создать аккаунт? Перед записью будет выполнен тест /v5/account/wallet-balance.');">
+        <div class="form-row">
+            <div class="form-group" style="flex:0 0 200px;">
+                <label>Имя (уникальное)</label>
+                <input type="text" name="name" maxlength="64" placeholder="например: sub_aggressive" required>
+            </div>
+            <div class="form-group" style="flex:0 0 140px;">
+                <label>Network</label>
+                <select name="network">
+                    <option value="live">live</option>
+                    <option value="testnet">testnet</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="text" name="api_key" autocomplete="off" required>
+            </div>
+            <div class="form-group">
+                <label>API Secret</label>
+                <input type="password" name="api_secret" autocomplete="off" required>
+            </div>
+        </div>
+        <button class="btn btn-primary" type="submit">Создать (с тестом)</button>
+        <span class="help">
+            После создания аккаунта он по умолчанию <b>включён</b>. Включён = в него уйдут новые ордера
+            стратегии s1 (fan-out). Стратегия s2 покажет аккаунт в форме ручного открытия.
+            Выключение не останавливает сопровождение уже открытых позиций.
+        </span>
+    </form>
+</div>
+
+</main>
+{% endblock %}
