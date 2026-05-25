@@ -898,6 +898,319 @@ final class BybitAdapter implements ExchangeAdapter
     }
 
     /**
+     * Частичное закрытие — рыночный ордер на qty * pct/100.
+     * Не меняет статус trade — позиция остаётся OPEN с уменьшенным qty.
+     * Reconciler обновит positions.qty на следующем тике.
+     *
+     * @return array{ok:bool, qty_closed?:float, error?:string}
+     */
+    public function partialCloseMarket(int $tradeId, float $pct): array
+    {
+        $pdo = Database::pdo();
+        $now = self::nowIso();
+
+        $stmt = $pdo->prepare(
+            "SELECT p.*, t.symbol as trade_symbol, t.side as trade_side
+             FROM positions p
+             JOIN trades t ON t.id = p.trade_id
+             WHERE p.trade_id = :tid AND p.exchange = :exch AND p.closed_at IS NULL"
+        );
+        $stmt->execute([':tid' => $tradeId, ':exch' => $this->exchange]);
+        $pos = $stmt->fetch();
+
+        if ($pos === false) {
+            return ['ok' => false, 'error' => 'Position not found'];
+        }
+
+        $symbol    = (string)($pos['symbol'] ?? $pos['trade_symbol']);
+        $side      = (string)$pos['side'];
+        $qty       = (float)$pos['qty'];
+        $closeSide = ($side === 'Buy') ? 'Sell' : 'Buy';
+
+        // Snap to qtyStep
+        try {
+            $info    = $this->getInstrumentInfo($symbol);
+            $qtyStep = (float)($info['qtyStep'] ?? 0);
+        } catch (\Throwable $e) {
+            $qtyStep = 0;
+        }
+        $qtyToClose = round($qty * $pct / 100.0, 8);
+        if ($qtyStep > 0) {
+            $qtyToClose = floor($qtyToClose / $qtyStep) * $qtyStep;
+            $qtyToClose = round($qtyToClose, 8);
+        }
+        if ($qtyToClose <= 0) {
+            return ['ok' => false, 'error' => 'Computed qty is zero'];
+        }
+
+        $linkId = 'pcm-' . $tradeId . '-' . bin2hex(random_bytes(4));
+
+        $accKey      = $this->accountCacheKey();
+        $hedge       = self::$hedgeModeCache[$accKey][$symbol] ?? false;
+        $closePosIdx = $hedge ? ((strtolower($side) === 'buy') ? 1 : 2) : 0;
+
+        $orderParams = [
+            'category'       => 'linear',
+            'symbol'         => $symbol,
+            'side'           => $closeSide,
+            'orderType'      => 'Market',
+            'qty'            => (string)$qtyToClose,
+            'timeInForce'    => 'GTC',
+            'orderLinkId'    => $linkId,
+            'reduceOnly'     => true,
+            'closeOnTrigger' => false,
+            'positionIdx'    => $closePosIdx,
+        ];
+        $resp = $this->client->placeOrder($orderParams);
+
+        // Auto-retry on position idx mismatch
+        if (!(($resp['category'] ?? null) === Errors::SUCCESS) && self::isPositionIdxMismatch($resp)) {
+            $newHedge       = !$hedge;
+            $newClosePosIdx = $newHedge ? ((strtolower($side) === 'buy') ? 1 : 2) : 0;
+            $orderParams['positionIdx'] = $newClosePosIdx;
+            $resp = $this->client->placeOrder($orderParams);
+            if (($resp['category'] ?? null) === Errors::SUCCESS) {
+                if (!isset(self::$hedgeModeCache[$accKey])) self::$hedgeModeCache[$accKey] = [];
+                self::$hedgeModeCache[$accKey][$symbol] = $newHedge;
+            }
+        }
+
+        if ($resp['category'] !== Errors::SUCCESS) {
+            return ['ok' => false, 'error' => $resp['ret_msg'] ?? 'unknown'];
+        }
+
+        EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'partial_close_market', [
+            'exchange'   => $this->exchange,
+            'symbol'     => $symbol,
+            'pct'        => $pct,
+            'qty_closed' => $qtyToClose,
+            'link_id'    => $linkId,
+        ]);
+
+        return ['ok' => true, 'qty_closed' => $qtyToClose];
+    }
+
+    /**
+     * Частичное закрытие — GTC reduce-only лимит на qty * pct/100 по цене $tpPrice.
+     * Сохраняет ордер в orders (purpose='tp_partial', status='placed').
+     *
+     * @return array{ok:bool, order_link_id?:string, qty?:float, error?:string}
+     */
+    public function partialCloseLimit(int $tradeId, float $pct, float $tpPrice): array
+    {
+        $pdo = Database::pdo();
+        $now = self::nowIso();
+
+        $stmt = $pdo->prepare(
+            "SELECT p.*, t.symbol as trade_symbol, t.side as trade_side
+             FROM positions p
+             JOIN trades t ON t.id = p.trade_id
+             WHERE p.trade_id = :tid AND p.exchange = :exch AND p.closed_at IS NULL"
+        );
+        $stmt->execute([':tid' => $tradeId, ':exch' => $this->exchange]);
+        $pos = $stmt->fetch();
+
+        if ($pos === false) {
+            return ['ok' => false, 'error' => 'Position not found'];
+        }
+
+        $symbol    = (string)($pos['symbol'] ?? $pos['trade_symbol']);
+        $side      = (string)$pos['side'];
+        $qty       = (float)$pos['qty'];
+        $accId     = isset($pos['account_id']) && $pos['account_id'] !== null ? (int)$pos['account_id'] : $this->accountId;
+        $closeSide = ($side === 'Buy') ? 'Sell' : 'Buy';
+
+        // Snap to qtyStep
+        try {
+            $info    = $this->getInstrumentInfo($symbol);
+            $qtyStep = (float)($info['qtyStep'] ?? 0);
+        } catch (\Throwable $e) {
+            $qtyStep = 0;
+        }
+        $qtyToClose = round($qty * $pct / 100.0, 8);
+        if ($qtyStep > 0) {
+            $qtyToClose = floor($qtyToClose / $qtyStep) * $qtyStep;
+            $qtyToClose = round($qtyToClose, 8);
+        }
+        if ($qtyToClose <= 0) {
+            return ['ok' => false, 'error' => 'Computed qty is zero'];
+        }
+
+        $linkId = 'ptl-' . $tradeId . '-' . bin2hex(random_bytes(4));
+
+        $accKey      = $this->accountCacheKey();
+        $hedge       = self::$hedgeModeCache[$accKey][$symbol] ?? false;
+        $positionIdx = $hedge ? ((strtolower($closeSide) === 'sell') ? 1 : 2) : 0;
+
+        $orderParams = [
+            'category'    => 'linear',
+            'symbol'      => $symbol,
+            'side'        => $closeSide,
+            'orderType'   => 'Limit',
+            'qty'         => (string)$qtyToClose,
+            'price'       => (string)$tpPrice,
+            'timeInForce' => 'GTC',
+            'orderLinkId' => $linkId,
+            'reduceOnly'  => true,
+            'positionIdx' => $positionIdx,
+        ];
+        $resp = $this->client->placeOrder($orderParams);
+
+        // Auto-retry on position idx mismatch
+        if (!(($resp['category'] ?? null) === Errors::SUCCESS) && self::isPositionIdxMismatch($resp)) {
+            $newHedge   = !$hedge;
+            $newPosIdx  = $newHedge ? ((strtolower($closeSide) === 'sell') ? 1 : 2) : 0;
+            $orderParams['positionIdx'] = $newPosIdx;
+            $resp = $this->client->placeOrder($orderParams);
+            if (($resp['category'] ?? null) === Errors::SUCCESS) {
+                if (!isset(self::$hedgeModeCache[$accKey])) self::$hedgeModeCache[$accKey] = [];
+                self::$hedgeModeCache[$accKey][$symbol] = $newHedge;
+            }
+        }
+
+        if ($resp['category'] !== Errors::SUCCESS) {
+            return ['ok' => false, 'error' => $resp['ret_msg'] ?? 'unknown'];
+        }
+
+        $bybitOrderId = (string)($resp['result']['orderId'] ?? '');
+
+        // Store in orders table
+        $pdo->prepare(
+            'INSERT INTO orders (trade_id, purpose, side, order_type, qty, price, reduce_only,
+               bybit_order_link_id, bybit_order_id, status, placed_at, paper, exchange, account_id)
+             VALUES (:tid, \'tp_partial\', :side, \'Limit\', :qty, :price, 1,
+               :link_id, :bybit_oid, \'placed\', :now, 0, :exch, :acc)'
+        )->execute([
+            ':tid'       => $tradeId,
+            ':side'      => $closeSide,
+            ':qty'       => $qtyToClose,
+            ':price'     => $tpPrice,
+            ':link_id'   => $linkId,
+            ':bybit_oid' => $bybitOrderId,
+            ':now'       => $now,
+            ':exch'      => $this->exchange,
+            ':acc'       => $accId,
+        ]);
+
+        EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'partial_close_limit_placed', [
+            'exchange'      => $this->exchange,
+            'symbol'        => $symbol,
+            'pct'           => $pct,
+            'qty'           => $qtyToClose,
+            'tp_price'      => $tpPrice,
+            'order_link_id' => $linkId,
+            'bybit_order_id'=> $bybitOrderId,
+        ]);
+
+        return ['ok' => true, 'order_link_id' => $linkId, 'qty' => $qtyToClose];
+    }
+
+    /**
+     * Принудительный SL/TP: setTradingStop + отмена дочерних ордеров + manual_override=1.
+     *
+     * @return array{ok:bool, error?:string}
+     */
+    public function setManualStops(int $tradeId, ?float $sl, ?float $tp): array
+    {
+        $pdo = Database::pdo();
+        $now = self::nowIso();
+
+        // Load trade + position
+        $tradeStmt = $pdo->prepare('SELECT * FROM trades WHERE id = :id LIMIT 1');
+        $tradeStmt->execute([':id' => $tradeId]);
+        $trade = $tradeStmt->fetch();
+        if ($trade === false) {
+            return ['ok' => false, 'error' => 'Trade not found'];
+        }
+
+        $posStmt = $pdo->prepare(
+            "SELECT * FROM positions WHERE trade_id = :tid AND exchange = :exch AND closed_at IS NULL LIMIT 1"
+        );
+        $posStmt->execute([':tid' => $tradeId, ':exch' => $this->exchange]);
+        $pos = $posStmt->fetch();
+        if ($pos === false) {
+            return ['ok' => false, 'error' => 'Open position not found'];
+        }
+
+        $symbol = (string)$trade['symbol'];
+        $side   = (string)$pos['side'];
+
+        // Build setTradingStop fields
+        $stopFields = [
+            'trade_id' => $tradeId,
+            'context'  => ['purpose' => 'manual_stops'],
+        ];
+        if ($sl !== null && $sl > 0) {
+            $stopFields['sl_price'] = $sl;
+        }
+        if ($tp !== null && $tp > 0) {
+            $stopFields['tp_price'] = $tp;
+        }
+
+        try {
+            $this->setTradingStop($symbol, $side, $stopFields);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'error' => 'setTradingStop failed: ' . $e->getMessage()];
+        }
+
+        // Cancel all child orders (avg + tp_partial) on Bybit, best-effort
+        $childStmt = $pdo->prepare(
+            "SELECT bybit_order_link_id, bybit_order_id FROM orders
+             WHERE trade_id = :tid AND status IN ('placed','pending') AND purpose IN ('avg','tp_partial')"
+        );
+        $childStmt->execute([':tid' => $tradeId]);
+        $childOrders = $childStmt->fetchAll();
+
+        foreach ($childOrders as $ord) {
+            $linkId = (string)($ord['bybit_order_link_id'] ?? '');
+            if ($linkId !== '') {
+                try {
+                    $this->client->cancelOrder($symbol, $linkId);
+                } catch (\Throwable $e) {
+                    Logger::get()->warning('bybit_adapter: setManualStops — cancelOrder failed (best-effort)', [
+                        'trade_id' => $tradeId,
+                        'link_id'  => $linkId,
+                        'error'    => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        // Mark child orders as cancelled in DB
+        $pdo->prepare(
+            "UPDATE orders SET status = 'cancelled', cancelled_at = :now
+             WHERE trade_id = :tid AND status IN ('placed','pending') AND purpose IN ('avg','tp_partial')"
+        )->execute([':now' => $now, ':tid' => $tradeId]);
+
+        // Update trade: manual_override=1, clear trailing_activated_at, update sl_current if SL given
+        if ($sl !== null && $sl > 0) {
+            $pdo->prepare(
+                "UPDATE trades SET manual_override = 1, trailing_activated_at = NULL, sl_current = :sl WHERE id = :id"
+            )->execute([':sl' => $sl, ':id' => $tradeId]);
+        } else {
+            $pdo->prepare(
+                "UPDATE trades SET manual_override = 1, trailing_activated_at = NULL WHERE id = :id"
+            )->execute([':id' => $tradeId]);
+        }
+
+        // Update position sl_price if SL provided
+        if ($sl !== null && $sl > 0) {
+            $pdo->prepare(
+                "UPDATE positions SET sl_price = :sl WHERE trade_id = :tid AND closed_at IS NULL"
+            )->execute([':sl' => $sl, ':tid' => $tradeId]);
+        }
+
+        EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'manual_stops_set', [
+            'exchange' => $this->exchange,
+            'symbol'   => $symbol,
+            'sl'       => $sl,
+            'tp'       => $tp,
+        ]);
+
+        return ['ok' => true];
+    }
+
+    /**
      * Reduce-only лимит-ордер (для S2 60%-TP).
      *
      * @return string Bybit order_id

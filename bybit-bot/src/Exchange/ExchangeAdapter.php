@@ -67,4 +67,13 @@ interface ExchangeAdapter
         float $price,
         string $orderLinkId
     ): string;
+
+    /** @return array{ok:bool, qty_closed?:float, error?:string} */
+    public function partialCloseMarket(int $tradeId, float $pct): array;
+
+    /** @return array{ok:bool, order_link_id?:string, qty?:float, error?:string} */
+    public function partialCloseLimit(int $tradeId, float $pct, float $tpPrice): array;
+
+    /** @return array{ok:bool, error?:string} */
+    public function setManualStops(int $tradeId, ?float $sl, ?float $tp): array;
 }

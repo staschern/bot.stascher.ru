@@ -645,7 +645,8 @@ final class LiveReconciler
                     t.trailing_pct           AS trade_trailing_pct,
                     t.trailing_trigger       AS trade_trailing_trigger,
                     t.trailing_activated_at  AS trade_trailing_activated_at,
-                    t.entry_real             AS trade_entry_real
+                    t.entry_real             AS trade_entry_real,
+                    t.manual_override        AS trade_manual_override
              FROM positions p
              JOIN trades t ON t.id = p.trade_id
              WHERE p.exchange = :exch AND p.closed_at IS NULL" . $this->accountFilter('p.account_id')
@@ -700,6 +701,9 @@ final class LiveReconciler
                     ':aep' => $ravg > 0 ? $ravg : null,
                     ':id'  => (int)$lp['id'],
                 ]);
+
+                // manual_override: пользователь зафиксировал SL/TP вручную — пропускаем trailing.
+                if (empty($lp['trade_manual_override'])) {
 
                 // v0.8.0.10, v0.8.0.11, v0.9.2: клиентский трейлинг + трекинг активации.
                 // Источники трейлинг-параметров: сначала positions, потом trades.

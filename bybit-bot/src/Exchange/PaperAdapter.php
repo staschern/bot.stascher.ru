@@ -1362,6 +1362,23 @@ final class PaperAdapter implements ExchangeAdapter
         ];
     }
 
+    // ── Management stubs (not supported in paper mode) ──────────────────────
+
+    public function partialCloseMarket(int $tradeId, float $pct): array
+    {
+        return ['ok' => false, 'error' => 'Not supported in paper mode'];
+    }
+
+    public function partialCloseLimit(int $tradeId, float $pct, float $tpPrice): array
+    {
+        return ['ok' => false, 'error' => 'Not supported in paper mode'];
+    }
+
+    public function setManualStops(int $tradeId, ?float $sl, ?float $tp): array
+    {
+        return ['ok' => false, 'error' => 'Not supported in paper mode'];
+    }
+
     /**
      * v0.7.3: ручная отмена PENDING_CONDITIONAL.
      *
