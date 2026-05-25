@@ -854,14 +854,40 @@ final class BybitAdapter implements ExchangeAdapter
                 "UPDATE positions SET closed_at = :now, close_reason = :r WHERE trade_id = :tid AND exchange = :exch"
             )->execute([':now' => $now, ':r' => $reason, ':tid' => $tradeId, ':exch' => $this->exchange]);
 
+            // Пытаемся сразу получить realised PnL с биржи (best-effort, 1 сек ожидание).
+            // Если не удастся — reconciler подберёт на следующем тике через
+            // closeLocalPositionAfterRemoteGone() (теперь обновляет pnl для realized_pnl_usdt IS NULL).
+            $realisedPnl = null;
+            try {
+                usleep(1000000); // 1s — даём бирже исполнить рыночный ордер
+                $pnlResp = $this->client->getSigned('/v5/position/closed-pnl', [
+                    'category' => 'linear',
+                    'symbol'   => $symbol,
+                    'limit'    => 5,
+                ]);
+                if (($pnlResp['category'] ?? '') === Errors::SUCCESS) {
+                    $pnlList = $pnlResp['result']['list'] ?? [];
+                    if (!empty($pnlList)) {
+                        $realisedPnl = isset($pnlList[0]['closedPnl']) ? (float)$pnlList[0]['closedPnl'] : null;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Logger::get()->warning('bybit_adapter: closePosition — не удалось получить PnL', [
+                    'trade_id' => $tradeId, 'error' => $e->getMessage(),
+                ]);
+            }
+
+            $tradeStatus = ($realisedPnl !== null && $realisedPnl >= 0) ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
             $pdo->prepare(
-                "UPDATE trades SET status = 'CLOSED_LOSS', closed_at = :now WHERE id = :id"
-            )->execute([':now' => $now, ':id' => $tradeId]);
+                "UPDATE trades SET status = :s, closed_at = :now, realized_pnl_usdt = :pnl WHERE id = :id"
+            )->execute([':s' => $tradeStatus, ':now' => $now, ':pnl' => $realisedPnl, ':id' => $tradeId]);
 
             EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'position_closed', [
-                'exchange' => $this->exchange,
-                'reason'   => $reason,
-                'symbol'   => $symbol,
+                'exchange'     => $this->exchange,
+                'reason'       => $reason,
+                'symbol'       => $symbol,
+                'realised_pnl' => $realisedPnl,
+                'status'       => $tradeStatus,
             ]);
         } else {
             Logger::get()->error('bybit_adapter: closePosition failed', [

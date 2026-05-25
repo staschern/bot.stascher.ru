@@ -613,9 +613,9 @@ final class LiveReconciler
 
         if ($purpose === 'entry_conditional') {
             $pdo->prepare(
-                "UPDATE trades SET status = 'CANCELLED'
+                "UPDATE trades SET status = 'CANCELLED', closed_at = :now
                  WHERE id = :id AND status = 'PENDING_CONDITIONAL'"
-            )->execute([':id' => $tradeId]);
+            )->execute([':now' => $now, ':id' => $tradeId]);
 
             EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'live_pending_cancelled_remote', [
                 'exchange' => $this->exchange,
@@ -832,10 +832,19 @@ final class LiveReconciler
         ]);
 
         $tradeStatus = ($realisedPnl !== null && $realisedPnl >= 0) ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
+        // Обновляем trade в двух случаях:
+        //   a) trade ещё не в терминальном статусе (нормальный путь);
+        //   b) trade уже CLOSED_PROFIT/CLOSED_LOSS (поставлен из closePosition()),
+        //      но realized_pnl_usdt IS NULL — значит PnL ещё не был получен.
+        //      В этом случае правим статус и заполняем PnL (важно для ручного закрытия).
         $pdo->prepare(
             "UPDATE trades
              SET status = :s, closed_at = COALESCE(closed_at, :now), realized_pnl_usdt = :pnl
-             WHERE id = :id AND status NOT IN ('CLOSED_PROFIT','CLOSED_LOSS','CANCELLED')"
+             WHERE id = :id
+               AND (
+                     status NOT IN ('CLOSED_PROFIT','CLOSED_LOSS','CANCELLED')
+                  OR (status IN ('CLOSED_PROFIT','CLOSED_LOSS') AND realized_pnl_usdt IS NULL)
+               )"
         )->execute([':s' => $tradeStatus, ':now' => $now, ':pnl' => $realisedPnl, ':id' => $tradeId]);
 
         EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'live_position_closed_remote', [
