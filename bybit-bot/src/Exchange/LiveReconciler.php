@@ -634,16 +634,18 @@ final class LiveReconciler
         $now = $this->nowIso();
 
         // v0.9.0-step4: доп. фильтр по p.account_id.
+        // v0.9.2: добавлен t.entry_real для проверки прибыльности при trailing auto-close.
         $stmt = $pdo->prepare(
             "SELECT p.id, p.trade_id, p.symbol, p.side, p.qty, p.avg_entry_price,
-                    p.sl_price            AS pos_sl_price,
-                    p.trailing_pct        AS pos_trailing_pct,
+                    p.sl_price               AS pos_sl_price,
+                    p.trailing_pct           AS pos_trailing_pct,
                     p.trailing_trigger_price AS pos_trailing_trigger,
-                    t.status              AS trade_status,
-                    t.sl_init             AS trade_sl_init,
-                    t.trailing_pct        AS trade_trailing_pct,
-                    t.trailing_trigger    AS trade_trailing_trigger,
-                    t.trailing_activated_at AS trade_trailing_activated_at
+                    t.status                 AS trade_status,
+                    t.sl_init                AS trade_sl_init,
+                    t.trailing_pct           AS trade_trailing_pct,
+                    t.trailing_trigger       AS trade_trailing_trigger,
+                    t.trailing_activated_at  AS trade_trailing_activated_at,
+                    t.entry_real             AS trade_entry_real
              FROM positions p
              JOIN trades t ON t.id = p.trade_id
              WHERE p.exchange = :exch AND p.closed_at IS NULL" . $this->accountFilter('p.account_id')
@@ -657,13 +659,18 @@ final class LiveReconciler
         $remotePositionsRaw = $this->adapter->getPositions();
         $remoteBySymbol = [];
         foreach ($remotePositionsRaw as $rp) {
-            $sym = (string)($rp['symbol'] ?? '');
+            $sym  = (string)($rp['symbol'] ?? '');
             $side = (string)($rp['side']   ?? '');
             $size = (float)($rp['size']    ?? 0);
             if ($sym !== '' && $size > 0) {
                 $remoteBySymbol[$sym . '_' . $side] = $rp;
             }
         }
+
+        // v0.9.2: кэш kline по символу — один запрос на символ за весь тик.
+        // Используем обе свечи (текущая + предыдущая) чтобы поймать wick в конце прошлой минуты.
+        /** @var array<string, array{high:float,low:float}|null> */
+        $klineCache = [];
 
         foreach ($localPositions as $lp) {
             $symbol = (string)$lp['symbol'];
@@ -694,8 +701,7 @@ final class LiveReconciler
                     ':id'  => (int)$lp['id'],
                 ]);
 
-                // v0.8.0.10 и v0.8.0.11: клиентский трейлинг + трекинг активации.
-                //
+                // v0.8.0.10, v0.8.0.11, v0.9.2: клиентский трейлинг + трекинг активации.
                 // Источники трейлинг-параметров: сначала positions, потом trades.
                 $tradeIdLp = (int)$lp['trade_id'];
                 $tt = $lp['pos_trailing_trigger'] !== null
@@ -704,83 +710,190 @@ final class LiveReconciler
                 $tpct = $lp['pos_trailing_pct'] !== null
                     ? (float)$lp['pos_trailing_pct']
                     : ($lp['trade_trailing_pct'] !== null ? (float)$lp['trade_trailing_pct'] : null);
-                $curSl = $lp['pos_sl_price'] !== null ? (float)$lp['pos_sl_price'] : null;
+                $curSl       = $lp['pos_sl_price'] !== null ? (float)$lp['pos_sl_price'] : null;
                 $alreadyActive = !empty($lp['trade_trailing_activated_at']);
-                $isLong = ($side === 'Buy');
+                $isLong      = ($side === 'Buy');
+                $entryReal   = isset($lp['trade_entry_real']) && $lp['trade_entry_real'] > 0
+                    ? (float)$lp['trade_entry_real'] : null;
 
-                // 1) Активация: если цена впервые прошла trigger — фиксируем момент.
+                // v0.9.2: kline high/low для детекции касания триггера по вику.
+                // Запрашиваем только когда есть trailing-параметры.
+                $klineHigh = $markPrice;
+                $klineLow  = $markPrice;
+                if (($tt !== null || $alreadyActive) && $markPrice > 0) {
+                    if (!array_key_exists($symbol, $klineCache)) {
+                        try {
+                            // limit=2: [0]=текущая (формирующаяся), [1]=предыдущая (завершённая)
+                            $candles = $this->adapter->getKline($symbol, '1', 2);
+                            if (count($candles) >= 2) {
+                                $klineCache[$symbol] = [
+                                    'high' => max((float)$candles[0]['high'], (float)$candles[1]['high']),
+                                    'low'  => min((float)$candles[0]['low'],  (float)$candles[1]['low']),
+                                ];
+                            } elseif (!empty($candles)) {
+                                $klineCache[$symbol] = [
+                                    'high' => (float)$candles[0]['high'],
+                                    'low'  => (float)$candles[0]['low'],
+                                ];
+                            } else {
+                                $klineCache[$symbol] = null;
+                            }
+                        } catch (\Throwable $e) {
+                            Logger::get()->warning('live_trailing: getKline failed', [
+                                'symbol' => $symbol,
+                                'error'  => $e->getMessage(),
+                            ]);
+                            $klineCache[$symbol] = null;
+                        }
+                    }
+                    if ($klineCache[$symbol] !== null) {
+                        $klineHigh = max($markPrice, $klineCache[$symbol]['high']);
+                        $klineLow  = min($markPrice, $klineCache[$symbol]['low']);
+                    }
+                }
+
+                // 1) Активация: если цена (или экстремум свечи) коснулась trigger.
+                //    Используем klineHigh/Low — ловим wick, пропущенный между тиками cron.
                 if ($tt !== null && $markPrice > 0) {
-                    $crossed = $isLong ? ($markPrice >= $tt) : ($markPrice <= $tt);
+                    $priceForActivation = $isLong ? $klineHigh : $klineLow;
+                    $crossed = $isLong ? ($priceForActivation >= $tt) : ($priceForActivation <= $tt);
                     if ($crossed && !$alreadyActive) {
                         $pdo->prepare(
                             'UPDATE trades SET trailing_activated_at = :ts
                              WHERE id = :id AND trailing_activated_at IS NULL'
-                        )->execute([
-                            ':ts' => $now,
-                            ':id' => $tradeIdLp,
-                        ]);
+                        )->execute([':ts' => $now, ':id' => $tradeIdLp]);
                         $alreadyActive = true;
+                        EventRecorder::tradeEvent($tradeIdLp, EventRecorder::INFO, 'trailing_activated', [
+                            'symbol'     => $symbol,
+                            'mark_price' => $markPrice,
+                            'kline_high' => $klineHigh,
+                            'kline_low'  => $klineLow,
+                            'trigger'    => $tt,
+                            'via_wick'   => ($isLong ? $markPrice < $tt : $markPrice > $tt),
+                        ]);
                     }
                 }
 
-                // 2) Клиентский трейлинг: если трейлинг активирован и есть pct,
-                //    вычисляем новый SL от текущей цены. Если он строго лучше (ближе
-                //    к цене в нужную сторону) — обновляем на бирже и в БД.
+                // 2) Клиентский трейлинг: если активирован и есть pct.
+                //    Опорная цена — экстремум свечи (лучшая цена за последние ~2 мин),
+                //    чтобы SL рассчитывался от реально достигнутого уровня, а не только
+                //    от текущего mark_price.
                 if ($alreadyActive && $tpct !== null && $tpct > 0 && $markPrice > 0) {
+                    // priceRef — экстремум: high для long, low для short.
+                    $priceRef = $isLong ? $klineHigh : $klineLow;
                     $newSl = $isLong
-                        ? $markPrice * (1.0 - $tpct / 100.0)
-                        : $markPrice * (1.0 + $tpct / 100.0);
+                        ? $priceRef * (1.0 - $tpct / 100.0)
+                        : $priceRef * (1.0 + $tpct / 100.0);
                     // Округление до 6 знаков чтобы не спамить API микроизменениями.
                     $newSl = round($newSl, 6);
 
-                    $improved = false;
-                    if ($curSl === null || $curSl <= 0) {
-                        $improved = true; // SL в БД пустой — выставим
-                    } elseif ($isLong && $newSl > $curSl) {
-                        $improved = true;
-                    } elseif (!$isLong && $newSl < $curSl) {
-                        $improved = true;
-                    }
+                    // Цена уже ушла за вычисленный стоп (priceRef был выше/ниже mark_price)?
+                    $priceBeyondSl = $isLong ? ($markPrice < $newSl) : ($markPrice > $newSl);
 
-                    if ($improved) {
-                        try {
-                            // v0.8.0.15: передаём trade_id и context в setTradingStop —
-                            // адаптер сам запишет trade_event bybit_trading_stop_set/failed.
-                            $ok = $this->adapter->setTradingStop($symbol, $side, [
-                                'sl_price' => $newSl,
-                                'trade_id' => $tradeIdLp,
-                                'context'  => [
-                                    'purpose'    => 'live_trailing',
+                    if ($priceBeyondSl) {
+                        // Закрываем, если текущая цена в прибыли относительно entry;
+                        // иначе — сбрасываем активацию и ждём нового касания триггера.
+                        $isProfitable = $entryReal !== null && $entryReal > 0
+                            && ($isLong ? $markPrice > $entryReal : $markPrice < $entryReal);
+
+                        if ($isProfitable) {
+                            Logger::get()->info('live_trailing: цена за стопом — авто-закрытие', [
+                                'trade_id'  => $tradeIdLp,
+                                'symbol'    => $symbol,
+                                'mark_price'=> $markPrice,
+                                'price_ref' => $priceRef,
+                                'new_sl'    => $newSl,
+                                'entry'     => $entryReal,
+                            ]);
+                            try {
+                                $this->adapter->closePosition($tradeIdLp, 'trailing_sl_exceeded');
+                                EventRecorder::tradeEvent($tradeIdLp, EventRecorder::INFO, 'trailing_auto_close', [
+                                    'symbol'     => $symbol,
                                     'mark_price' => $markPrice,
-                                    'old_sl'     => $curSl,
+                                    'price_ref'  => $priceRef,
                                     'new_sl'     => $newSl,
-                                    'pct'        => $tpct,
-                                ],
+                                    'entry_real' => $entryReal,
+                                ]);
+                            } catch (\Throwable $e) {
+                                Logger::get()->error('live_trailing: auto-close failed', [
+                                    'trade_id' => $tradeIdLp,
+                                    'symbol'   => $symbol,
+                                    'error'    => $e->getMessage(),
+                                ]);
+                            }
+                        } else {
+                            // Сброс активации — trailing_trigger остаётся, ждём нового касания.
+                            $pdo->prepare(
+                                'UPDATE trades SET trailing_activated_at = NULL WHERE id = :id'
+                            )->execute([':id' => $tradeIdLp]);
+                            EventRecorder::tradeEvent($tradeIdLp, EventRecorder::INFO, 'trailing_reset_unprofitable', [
+                                'symbol'     => $symbol,
+                                'mark_price' => $markPrice,
+                                'price_ref'  => $priceRef,
+                                'new_sl'     => $newSl,
+                                'entry_real' => $entryReal,
                             ]);
-                        } catch (\Throwable $e) {
-                            Logger::get()->warning('live_trailing: setTradingStop ошибка', [
-                                'trade_id' => $tradeIdLp,
-                                'symbol'   => $symbol,
-                                'err'      => $e->getMessage(),
+                            Logger::get()->info('live_trailing: цена за стопом убыточно — сброс активации', [
+                                'trade_id'  => $tradeIdLp,
+                                'symbol'    => $symbol,
+                                'mark_price'=> $markPrice,
+                                'new_sl'    => $newSl,
                             ]);
-                            $ok = false;
                         }
-                        if ($ok) {
-                            $pdo->prepare(
-                                'UPDATE positions SET sl_price = :sl WHERE id = :id'
-                            )->execute([':sl' => $newSl, ':id' => (int)$lp['id']]);
-                            $pdo->prepare(
-                                'UPDATE trades SET sl_current = :sl WHERE id = :id'
-                            )->execute([':sl' => $newSl, ':id' => $tradeIdLp]);
-                            Logger::get()->info('live_trailing: SL подтянут', [
-                                'trade_id' => $tradeIdLp,
-                                'symbol'   => $symbol,
-                                'side'     => $side,
-                                'old_sl'   => $curSl,
-                                'new_sl'   => $newSl,
-                                'price'    => $markPrice,
-                                'pct'      => $tpct,
-                            ]);
+                        // SL на бирже не обновляем — либо уже закрылись, либо ждём нового триггера.
+                    } else {
+                        // Обычный путь: если SL улучшился — обновляем на бирже и в БД.
+                        $improved = false;
+                        if ($curSl === null || $curSl <= 0) {
+                            $improved = true;
+                        } elseif ($isLong && $newSl > $curSl) {
+                            $improved = true;
+                        } elseif (!$isLong && $newSl < $curSl) {
+                            $improved = true;
+                        }
+
+                        if ($improved) {
+                            try {
+                                // v0.8.0.15: передаём trade_id и context в setTradingStop —
+                                // адаптер сам запишет trade_event bybit_trading_stop_set/failed.
+                                $ok = $this->adapter->setTradingStop($symbol, $side, [
+                                    'sl_price' => $newSl,
+                                    'trade_id' => $tradeIdLp,
+                                    'context'  => [
+                                        'purpose'    => 'live_trailing',
+                                        'mark_price' => $markPrice,
+                                        'price_ref'  => $priceRef,
+                                        'old_sl'     => $curSl,
+                                        'new_sl'     => $newSl,
+                                        'pct'        => $tpct,
+                                    ],
+                                ]);
+                            } catch (\Throwable $e) {
+                                Logger::get()->warning('live_trailing: setTradingStop ошибка', [
+                                    'trade_id' => $tradeIdLp,
+                                    'symbol'   => $symbol,
+                                    'err'      => $e->getMessage(),
+                                ]);
+                                $ok = false;
+                            }
+                            if ($ok) {
+                                $pdo->prepare(
+                                    'UPDATE positions SET sl_price = :sl WHERE id = :id'
+                                )->execute([':sl' => $newSl, ':id' => (int)$lp['id']]);
+                                $pdo->prepare(
+                                    'UPDATE trades SET sl_current = :sl WHERE id = :id'
+                                )->execute([':sl' => $newSl, ':id' => $tradeIdLp]);
+                                Logger::get()->info('live_trailing: SL подтянут', [
+                                    'trade_id'  => $tradeIdLp,
+                                    'symbol'    => $symbol,
+                                    'side'      => $side,
+                                    'old_sl'    => $curSl,
+                                    'new_sl'    => $newSl,
+                                    'mark_price'=> $markPrice,
+                                    'price_ref' => $priceRef,
+                                    'pct'       => $tpct,
+                                ]);
+                            }
                         }
                     }
                 }
