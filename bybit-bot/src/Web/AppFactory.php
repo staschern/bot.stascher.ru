@@ -13,6 +13,7 @@ use BybitBot\Web\Controllers\SignalsController;
 use BybitBot\Web\Controllers\ManualController;
 use BybitBot\Web\Controllers\SettingsController;
 use BybitBot\Web\Controllers\StatsController;
+use BybitBot\Web\Controllers\ManagementController;
 use BybitBot\Web\Controllers\TradesController;
 use BybitBot\Web\Middleware\AuthMiddleware;
 use Slim\App;
@@ -127,6 +128,9 @@ final class AppFactory
             $group->post('/trades/{id}/close', [TradesController::class, 'manualClose'])->setName('trade_manual_close');
             // v0.8.0.12: восстановление отменённого conditional
             $group->post('/trades/{id}/restore', [TradesController::class, 'restore'])->setName('trade_restore');
+            // Management: частичное закрытие и принудительный SL/TP
+            $group->post('/trades/{id}/manage/partial-close', [ManagementController::class, 'partialClose'])->setName('trade_manage_partial_close');
+            $group->post('/trades/{id}/manage/set-stops',     [ManagementController::class, 'setStops'])->setName('trade_manage_set_stops');
             // v0.8.0.13: принудительный запуск cron_minute из UI
             $group->post('/admin/cron-minute/run', [TradesController::class, 'runCronMinute'])->setName('cron_minute_run');
 
