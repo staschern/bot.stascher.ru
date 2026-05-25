@@ -96,21 +96,13 @@
             </select>
         </label>
         <span style="color:#666;margin-left:10px;">D0 = {{ d0|number_format(2) }} USDT</span>
-        {# v0.9.1: обновить снапшот текущего периода #}
-        <button type="button" id="btn-save-current-snapshots"
-                style="margin-left:14px;background:#1a2a1a;color:#8d8;border:1px solid #353;
-                       padding:3px 10px;cursor:pointer;font-size:12px;"
-                title="Сохранить текущий баланс как начальный депозит для текущей недели и месяца (не ждать cron_daily)">
-            Обновить снапшот
-        </button>
-        {# v0.9.0-step9 task4 #}
         <button type="button" id="btn-backfill-snapshots"
-                style="margin-left:6px;background:#1a1a1a;color:#9bd;border:1px solid #335;
+                style="margin-left:14px;background:#1a1a1a;color:#9bd;border:1px solid #335;
                        padding:3px 10px;cursor:pointer;font-size:12px;"
                 title="Полный пересчёт всех equity_snapshots из истории сделок">
             Пересчитать snapshots
         </button>
-        <span id="snapshot-status" style="color:#779;margin-left:8px;font-size:11px;"></span>
+        <span id="backfill-status" style="color:#779;margin-left:8px;font-size:11px;"></span>
     </form>
 
     {# ── Итого за всё время ── #}
@@ -282,7 +274,7 @@
 </main>
 <script>
 (function(){
-    var snapStatus = document.getElementById('snapshot-status');
+    var snapStatus = document.getElementById('backfill-status');
 
     function postJson(url, body) {
         return fetch(url, {
@@ -295,26 +287,6 @@
 
     function setStatus(msg, color) {
         if (snapStatus) { snapStatus.textContent = msg; snapStatus.style.color = color || '#779'; }
-    }
-
-    // ── Обновить снапшот текущего периода ──
-    var btnCurrent = document.getElementById('btn-save-current-snapshots');
-    if (btnCurrent) {
-        btnCurrent.addEventListener('click', function(){
-            btnCurrent.disabled = true;
-            setStatus('Сохраняю…', '#aaa');
-            postJson('/stats/save-current-snapshots', {})
-                .then(function(j){
-                    if (j && j.ok) {
-                        setStatus('ОК, обновлено: ' + (j.written|0), '#8d8');
-                        setTimeout(function(){ location.reload(); }, 700);
-                    } else {
-                        setStatus('Ошибка: ' + (j && j.error ? j.error : 'unknown'), '#f88');
-                        btnCurrent.disabled = false;
-                    }
-                })
-                .catch(function(e){ setStatus('Ошибка: ' + e, '#f88'); btnCurrent.disabled = false; });
-        });
     }
 
     // ── Полный пересчёт snapshots ──
