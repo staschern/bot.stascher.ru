@@ -500,7 +500,7 @@
                             <strong>{{ t.symbol }}</strong>
                         </span>
                         {% if t.ignore_sl_until_open == 1 and t.status == 'PENDING_CONDITIONAL' %}
-                            <span class="badge-recovered" title="Выставлен вновь после отмены. SL не отменяет ордер до открытия">RECOVERED</span>
+                            <span class="badge-recovered" title="Выставлен вновь после отмены. SL не отменяет ордер до открытия">SL out</span>
                         {% endif %}
                     </span>
                     {% if t.account_id is not null %}
@@ -620,30 +620,34 @@
                 {% endif %}
             </td>
             <td>
-                <a href="/trades/{{ t.id }}" class="trade-link">Detail</a>
+                <div style="display:flex;align-items:center;gap:4px;flex-wrap:nowrap;">
+                    <a href="/trades/{{ t.id }}" class="trade-link">Details</a>
+                    {% if t.status in ['OPEN','AVERAGED'] and t.mode != 'paper' %}
+                    <button type="button" class="btn-sync-trade" data-trade-id="{{ t.id }}"
+                            data-symbol="{{ t.symbol }}" title="Синхронизировать с биржей"
+                            style="background:#1a1a2a;color:#77a;border:1px solid #335;
+                                   padding:2px 6px;font-size:10px;border-radius:3px;cursor:pointer;">
+                        ⟳
+                    </button>
+                    {% endif %}
+                </div>
                 {% if t.status in ['OPEN', 'AVERAGED', 'PENDING_CONDITIONAL'] %}
-                    <br>
                     <button type="button" class="btn-close-trade" data-trade-id="{{ t.id }}"
                             data-status="{{ t.status }}" data-symbol="{{ t.symbol }}"
+                            style="margin-top:3px;"
                             title="Закрыть позицию вручную по текущей цене">Закрыть</button>
                 {% elseif t.status == 'CANCELLED' and t.entry_ref is not null and t.sl_init is not null and t.tp_init is not null %}
-                    {# v0.8.0.12: выставить вновь conditional взамен Отмены #}
-                    <br>
                     <button type="button" class="btn-restore-trade" data-trade-id="{{ t.id }}"
                             data-symbol="{{ t.symbol }}" data-side="{{ t.side }}"
+                            style="margin-top:3px;"
                             title="Выставить вновь conditional ордер по тем же параметрам">Восстановить</button>
                 {% endif %}
                 {% if t.status in ['OPEN','AVERAGED'] and t.mode != 'paper' %}
+                <br>
                 <button type="button" class="btn-manage" data-id="{{ t.id }}"
                     style="background:#1a2a3a;color:#6ad;border:1px solid #2a4a6a;
-                           padding:2px 8px;font-size:11px;border-radius:3px;cursor:pointer;margin-left:4px;">
+                           padding:2px 8px;font-size:11px;border-radius:3px;cursor:pointer;margin-top:3px;">
                     Управление
-                </button>
-                <button type="button" class="btn-sync-trade" data-trade-id="{{ t.id }}"
-                        data-symbol="{{ t.symbol }}" title="Синхронизировать с биржей"
-                        style="background:#1a1a2a;color:#77a;border:1px solid #335;
-                               padding:2px 6px;font-size:10px;border-radius:3px;cursor:pointer;margin-left:2px;">
-                    ⟳
                 </button>
                 {% endif %}
             </td>
