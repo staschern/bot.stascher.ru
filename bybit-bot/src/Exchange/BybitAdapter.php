@@ -894,7 +894,166 @@ final class BybitAdapter implements ExchangeAdapter
                 'trade_id' => $tradeId,
                 'error'    => $resp['ret_msg'] ?? 'unknown',
             ]);
+            // Рыночный ордер отклонён. Возможно позиция уже закрыта на бирже
+            // (рассинхронизация — reconciler пропустил закрытие).
+            // Проверяем: если позиции на бирже нет → принудительно закрываем локально.
+            $this->forceSyncIfPositionGone($tradeId, $symbol, $reason . '_fallback', $pdo, $now);
         }
+    }
+
+    /**
+     * Проверяет, закрыта ли позиция на бирже, и если да — закрывает её локально.
+     * Вызывается как запасной путь при рассинхронизации.
+     */
+    private function forceSyncIfPositionGone(int $tradeId, string $symbol, string $reason, \PDO $pdo, string $now): void
+    {
+        try {
+            $bybitPositions = $this->getPositions($symbol);
+            $stillOpen = false;
+            foreach ($bybitPositions as $bp) {
+                if ((string)($bp['symbol'] ?? '') === $symbol && (float)($bp['size'] ?? 0) > 0) {
+                    $stillOpen = true;
+                    break;
+                }
+            }
+            if ($stillOpen) {
+                return; // позиция жива — ничего не делаем
+            }
+
+            // Позиции нет — получаем PnL и закрываем локально.
+            $realisedPnl = null;
+            try {
+                $pnlResp = $this->client->getSigned('/v5/position/closed-pnl', [
+                    'category' => 'linear',
+                    'symbol'   => $symbol,
+                    'limit'    => 5,
+                ]);
+                if (($pnlResp['category'] ?? '') === Errors::SUCCESS) {
+                    $pnlList = $pnlResp['result']['list'] ?? [];
+                    if (!empty($pnlList)) {
+                        $realisedPnl = isset($pnlList[0]['closedPnl']) ? (float)$pnlList[0]['closedPnl'] : null;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // PnL получить не удалось — закрываем без него
+            }
+
+            $pdo->prepare(
+                "UPDATE positions SET closed_at = :now, close_reason = :r
+                 WHERE trade_id = :tid AND exchange = :exch AND closed_at IS NULL"
+            )->execute([':now' => $now, ':r' => $reason, ':tid' => $tradeId, ':exch' => $this->exchange]);
+
+            $tradeStatus = ($realisedPnl !== null && $realisedPnl >= 0) ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
+            $pdo->prepare(
+                "UPDATE trades
+                 SET status = :s, closed_at = COALESCE(closed_at, :now),
+                     realized_pnl_usdt = COALESCE(realized_pnl_usdt, :pnl)
+                 WHERE id = :id AND status NOT IN ('CLOSED_PROFIT','CLOSED_LOSS','CANCELLED')"
+            )->execute([':s' => $tradeStatus, ':now' => $now, ':pnl' => $realisedPnl, ':id' => $tradeId]);
+
+            EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'position_force_synced', [
+                'exchange'     => $this->exchange,
+                'symbol'       => $symbol,
+                'reason'       => $reason,
+                'realised_pnl' => $realisedPnl,
+                'status'       => $tradeStatus,
+            ]);
+            Logger::get()->info('bybit_adapter: force-sync — позиция уже закрыта на бирже, синхронизировали локально', [
+                'trade_id'     => $tradeId,
+                'symbol'       => $symbol,
+                'realised_pnl' => $realisedPnl,
+            ]);
+        } catch (\Throwable $e) {
+            Logger::get()->warning('bybit_adapter: force-sync проверка провалилась', [
+                'trade_id' => $tradeId,
+                'symbol'   => $symbol,
+                'error'    => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Принудительная синхронизация трейда с реальным состоянием на бирже.
+     *
+     * Используется когда реконсайлер не поймал закрытие позиции (рассинхронизация).
+     * Возможные исходы:
+     *  — позиции нет на бирже → закрываем локально, возвращает ['ok'=>true, 'action'=>'closed']
+     *  — позиция жива → обновляем qty/mark_price, возвращает ['ok'=>true, 'action'=>'updated']
+     *  — ошибка → ['ok'=>false, 'error'=>...]
+     */
+    public function forceSyncTrade(int $tradeId): array
+    {
+        $pdo = Database::pdo();
+        $now = self::nowIso();
+
+        $stmt = $pdo->prepare(
+            "SELECT p.id AS pos_id, p.qty, p.side,
+                    t.symbol, t.status AS trade_status
+             FROM positions p
+             JOIN trades t ON t.id = p.trade_id
+             WHERE p.trade_id = :tid AND p.exchange = :exch AND p.closed_at IS NULL
+             LIMIT 1"
+        );
+        $stmt->execute([':tid' => $tradeId, ':exch' => $this->exchange]);
+        $local = $stmt->fetch();
+
+        if ($local === false) {
+            // Позиции в БД нет — возможно trade уже закрыт
+            return ['ok' => false, 'error' => 'no_local_position'];
+        }
+
+        $symbol = (string)$local['symbol'];
+        $side   = (string)$local['side'];
+
+        try {
+            $bybitPositions = $this->getPositions($symbol);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'error' => 'getPositions failed: ' . $e->getMessage()];
+        }
+
+        $remotePos = null;
+        foreach ($bybitPositions as $bp) {
+            if ((string)($bp['symbol'] ?? '') === $symbol
+                && (string)($bp['side']   ?? '') === $side
+                && (float)($bp['size']    ?? 0)   > 0
+            ) {
+                $remotePos = $bp;
+                break;
+            }
+        }
+
+        if ($remotePos === null) {
+            // Позиции нет на бирже — принудительно закрываем локально
+            $this->forceSyncIfPositionGone($tradeId, $symbol, 'force_sync_manual', $pdo, $now);
+            return ['ok' => true, 'action' => 'closed', 'symbol' => $symbol];
+        }
+
+        // Позиция жива — обновляем qty и mark_price
+        $markPrice = (float)($remotePos['markPrice'] ?? $remotePos['lastPrice'] ?? 0);
+        $remoteQty = (float)($remotePos['size'] ?? 0);
+        $remoteAvg = (float)($remotePos['avgPrice'] ?? 0);
+
+        $pdo->prepare(
+            "UPDATE positions
+             SET qty = :q, avg_entry_price = COALESCE(:aep, avg_entry_price),
+                 last_price = :lp, last_price_at = :now
+             WHERE id = :id"
+        )->execute([
+            ':q'   => $remoteQty > 0 ? $remoteQty : $local['qty'],
+            ':aep' => $remoteAvg > 0 ? $remoteAvg : null,
+            ':lp'  => $markPrice > 0 ? $markPrice : null,
+            ':now' => $now,
+            ':id'  => (int)$local['pos_id'],
+        ]);
+
+        EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'force_sync_updated', [
+            'exchange'   => $this->exchange,
+            'symbol'     => $symbol,
+            'remote_qty' => $remoteQty,
+            'mark_price' => $markPrice,
+        ]);
+
+        return ['ok' => true, 'action' => 'updated', 'symbol' => $symbol, 'qty' => $remoteQty, 'mark_price' => $markPrice];
     }
 
     /**
