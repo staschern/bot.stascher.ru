@@ -901,6 +901,8 @@ final class LiveReconciler
                         }
                     }
                 }
+            } // end if (empty($lp['trade_manual_override']))
+
             } else {
                 // Позиция закрыта на бирже, а в нашей БД ещё открыта → закрываем.
                 $this->closeLocalPositionAfterRemoteGone((int)$lp['id'], (int)$lp['trade_id'], $symbol, $side, $lp);
