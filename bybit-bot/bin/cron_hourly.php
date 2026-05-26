@@ -720,8 +720,8 @@ function cancelOldConditionalForSymbol(string $symbol, string $side, string $mod
         }
 
         Database::pdo()->prepare(
-            "UPDATE trades SET status = 'CANCELLED' WHERE id = :id"
-        )->execute([':id' => $oldTradeId]);
+            "UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id"
+        )->execute([':now' => gmdate('Y-m-d\\TH:i:s.v\\Z'), ':id' => $oldTradeId]);
 
         EventRecorder::tradeEvent($oldTradeId, EventRecorder::INFO, 'conditional_replaced', [
             'symbol'      => $symbol,
@@ -800,8 +800,8 @@ function updateTradeAfterPlace(int $tradeId, string $linkId, string $orderId): v
 function cancelTradeRecord(int $tradeId, string $reason): void
 {
     Database::pdo()->prepare(
-        "UPDATE trades SET status = 'CANCELLED' WHERE id = :id"
-    )->execute([':id' => $tradeId]);
+        "UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id"
+    )->execute([':now' => gmdate('Y-m-d\\TH:i:s.v\\Z'), ':id' => $tradeId]);
 
     EventRecorder::tradeEvent($tradeId, EventRecorder::ERROR, 'trade_cancelled_on_place_fail', [
         'reason' => $reason,

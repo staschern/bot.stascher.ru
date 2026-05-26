@@ -626,7 +626,7 @@ function cmdStrategyS1Run(string $root): void
             );
         } catch (\Throwable $e) {
             fwrite(STDERR, "FAIL place: " . $e->getMessage() . "\n");
-            $pdo->prepare("UPDATE trades SET status = 'CANCELLED' WHERE id = :id")->execute([':id' => $tradeId]);
+            $pdo->prepare("UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id")->execute([':now' => gmdate('Y-m-d\\TH:i:s.v\\Z'), ':id' => $tradeId]);
         }
     }
 }
@@ -741,7 +741,7 @@ function cmdPaperReset(): void
     $pdo->exec("DELETE FROM paper_orders");
     $pdo->exec("DELETE FROM orders WHERE paper = 1");
     $pdo->exec("DELETE FROM positions WHERE paper = 1");
-    $pdo->exec("UPDATE trades SET status = 'CANCELLED' WHERE status = 'PENDING_CONDITIONAL' AND mode = 'paper'");
+    $pdo->exec("UPDATE trades SET status = 'CANCELLED', closed_at = '" . gmdate('Y-m-d\\TH:i:s.v\\Z') . "' WHERE status = 'PENDING_CONDITIONAL' AND mode = 'paper' AND closed_at IS NULL");
 
     echo "Готово.\n";
 }

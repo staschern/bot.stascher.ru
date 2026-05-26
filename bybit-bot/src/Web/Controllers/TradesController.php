@@ -756,8 +756,8 @@ final class TradesController
             $orderId = $adapter->placeConditional($intent);
         } catch (\Throwable $e) {
             // Откат: помечаем новый trade как CANCELLED, сообщаем об ошибке.
-            $pdo->prepare("UPDATE trades SET status = 'CANCELLED' WHERE id = :id")
-                ->execute([':id' => $newId]);
+            $pdo->prepare("UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id")
+                ->execute([':now' => gmdate('Y-m-d\\TH:i:s.v\\Z'), ':id' => $newId]);
             $response->getBody()->write(json_encode([
                 'ok' => false, 'error' => 'place_failed', 'msg' => $e->getMessage(),
             ]));

@@ -372,8 +372,8 @@ final class ManualOrderService
 
         } catch (\Throwable $e) {
             // Откатываем — пометить trade как CANCELLED
-            $pdo->prepare("UPDATE trades SET status = 'CANCELLED' WHERE id = :id")
-                ->execute([':id' => $tradeId]);
+            $pdo->prepare("UPDATE trades SET status = 'CANCELLED', closed_at = :now WHERE id = :id")
+                ->execute([':now' => gmdate('Y-m-d\\TH:i:s.v\\Z'), ':id' => $tradeId]);
 
             EventRecorder::tradeEvent($tradeId, EventRecorder::ERROR, 'manual_place_failed', [
                 'error'        => $e->getMessage(),
