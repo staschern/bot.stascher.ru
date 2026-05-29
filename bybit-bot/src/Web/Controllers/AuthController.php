@@ -36,7 +36,7 @@ final class AuthController
                             ->withStatus(302);
         }
 
-        $ttl = (int)Config::bootstrap('session.ttl_hours', 8);
+        $ttl = (int)Config::get('session.ttl_hours', null, 168);
         $token = Auth::createSession(
             $result['user_id'],
             $ip,

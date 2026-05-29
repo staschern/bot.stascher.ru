@@ -39,13 +39,14 @@ return [
     ],
 
     'session' => [
-        'ttl_hours'  => (int)($_ENV['SESSION_TTL_HOURS']  ?? 8),
+        'ttl_hours'  => (int)($_ENV['SESSION_TTL_HOURS']  ?? 168),
         'idle_hours' => (int)($_ENV['SESSION_IDLE_HOURS'] ?? 1),
     ],
 
     // Дефолты, заливаемые в `settings` при первой миграции (см. spec.md §13).
     'defaults' => [
         'mode'                                  => 'paper',
+        'session.ttl_hours'                     => 168,
         'delta_pct_of_amplitude'                => 0.08,
         'delta_lookback_candles'                => 24,
         'market_coef'                           => 1.35,

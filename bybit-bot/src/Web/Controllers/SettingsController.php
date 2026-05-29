@@ -335,6 +335,7 @@ final class SettingsController
             'funding_filter_enabled'           => 'funding_filter.enabled',
             'funding_filter_extreme_pct'       => 'funding_filter.extreme_pct',
             'min_lot_overshoot_pct'            => 'min_lot_overshoot.pct',
+            'session_ttl_hours'                => 'session.ttl_hours',
         ];
         foreach ($dotKeys as $from => $to) {
             if (array_key_exists($from, $body) && !array_key_exists($to, $body)) {
@@ -423,10 +424,12 @@ final class SettingsController
             'daily_drawdown.pct', 'signal_upper_cap.pct',
             'min_lot_overshoot.pct', 'long_short_balance.max_share_pct',
             'long_short_balance.min_total_to_check', 'funding_filter.extreme_pct',
+            'session.ttl_hours',
         ];
         // Ключи с дополнительными ограничениями диапазона
         $rangeChecks = [
-            'qty_safety_margin_pct' => ['min' => 0.0, 'max' => 50.0],
+            'qty_safety_margin_pct' => ['min' => 0.0,  'max' => 50.0],
+            'session.ttl_hours'     => ['min' => 1.0,  'max' => 8760.0],
         ];
         foreach ($numericKeys as $key) {
             if (isset($body[$key]) && $body[$key] !== '') {
