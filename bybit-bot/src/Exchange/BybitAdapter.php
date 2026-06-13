@@ -998,8 +998,18 @@ final class BybitAdapter implements ExchangeAdapter
         $local = $stmt->fetch();
 
         if ($local === false) {
-            // Позиции в БД нет — возможно trade уже закрыт
-            return ['ok' => false, 'error' => 'no_local_position'];
+            // Позиции в БД нет — проверяем, не orphan ли это (trade OPEN/AVERAGED без positions-записи)
+            $trStmt = $pdo->prepare(
+                "SELECT symbol FROM trades
+                 WHERE id = :id AND account_id = :aid AND status IN ('OPEN','AVERAGED') LIMIT 1"
+            );
+            $trStmt->execute([':id' => $tradeId, ':aid' => $this->accountId]);
+            $trRow = $trStmt->fetch();
+            if (!$trRow) {
+                return ['ok' => false, 'error' => 'trade_not_active'];
+            }
+            $this->forceSyncIfPositionGone($tradeId, (string)$trRow['symbol'], 'force_sync_orphan', $pdo, $now);
+            return ['ok' => true, 'action' => 'closed', 'symbol' => (string)$trRow['symbol']];
         }
 
         $symbol = (string)$local['symbol'];
@@ -1624,7 +1634,19 @@ final class BybitAdapter implements ExchangeAdapter
         $stmt->execute([':tid' => $tradeId, ':exch' => $this->exchange]);
         $pos = $stmt->fetch(\PDO::FETCH_ASSOC);
         if ($pos === false) {
-            return ['ok' => false, 'error' => 'no_open_position'];
+            // Нет открытой positions-записи — возможно orphan trade
+            $trStmt = $pdo->prepare(
+                "SELECT symbol FROM trades
+                 WHERE id = :id AND account_id = :aid AND status IN ('OPEN','AVERAGED') LIMIT 1"
+            );
+            $trStmt->execute([':id' => $tradeId, ':aid' => $this->accountId]);
+            $trRow = $trStmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$trRow) {
+                return ['ok' => false, 'error' => 'no_open_position'];
+            }
+            $now = self::nowIso();
+            $this->forceSyncIfPositionGone($tradeId, (string)$trRow['symbol'], 'close_manual_orphan', $pdo, $now);
+            return ['ok' => true, 'reason' => 'manual_orphan'];
         }
 
         $this->closePosition($tradeId, 'manual');

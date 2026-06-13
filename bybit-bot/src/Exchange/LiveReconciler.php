@@ -103,6 +103,7 @@ final class LiveReconciler
     {
         $this->reconcileOrders();
         $this->reconcilePositions();
+        $this->reconcileOrphanTrades();
         $this->reconcilePendingMarketPrices();
     }
 
@@ -971,6 +972,66 @@ final class LiveReconciler
             'exchange'    => $this->exchange,
             'realised_pnl'=> $realisedPnl,
         ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ORPHAN TRADES — OPEN/AVERAGED без positions-записи
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Находит трейды в статусе OPEN/AVERAGED, у которых нет ни одной открытой
+     * positions-записи (closed_at IS NULL) для данного exchange/account.
+     * Такая ситуация возникает при рассинхронизации (позиция закрылась на бирже,
+     * но реконсайлер не успел или positions-запись уже удалена).
+     * Для каждого orphan вызываем forceSyncTrade() — он проверит биржу и закроет
+     * локально если позиции нет.
+     */
+    private function reconcileOrphanTrades(): void
+    {
+        $pdo = Database::pdo();
+
+        $stmt = $pdo->prepare(
+            "SELECT t.id, t.symbol FROM trades t
+             WHERE t.exchange = :exch
+               AND t.status IN ('OPEN','AVERAGED')
+               AND t.closed_at IS NULL" .
+            $this->accountFilter('t.account_id') .
+            " AND NOT EXISTS (
+                SELECT 1 FROM positions p
+                WHERE p.trade_id = t.id
+                  AND p.exchange = :exch2
+                  AND p.closed_at IS NULL
+            )"
+        );
+        $params = $this->bindAccount([':exch' => $this->exchange, ':exch2' => $this->exchange]);
+        $stmt->execute($params);
+        $orphans = $stmt->fetchAll();
+
+        if (empty($orphans)) {
+            return;
+        }
+
+        foreach ($orphans as $row) {
+            $tradeId = (int)$row['id'];
+            $symbol  = (string)$row['symbol'];
+            Logger::get()->info('live_reconciler: orphan trade detected, syncing', [
+                'trade_id' => $tradeId,
+                'symbol'   => $symbol,
+                'exchange' => $this->exchange,
+            ]);
+            try {
+                $result = $this->adapter->forceSyncTrade($tradeId);
+                Logger::get()->info('live_reconciler: orphan trade sync result', [
+                    'trade_id' => $tradeId,
+                    'result'   => $result,
+                ]);
+            } catch (\Throwable $e) {
+                Logger::get()->error('live_reconciler: orphan trade sync failed', [
+                    'trade_id' => $tradeId,
+                    'error'    => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
