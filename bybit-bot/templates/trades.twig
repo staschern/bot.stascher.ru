@@ -645,6 +645,10 @@
                 {% if t.status in ['OPEN','AVERAGED'] and t.mode != 'paper' %}
                 <br>
                 <button type="button" class="btn-manage" data-id="{{ t.id }}"
+                    data-qty="{{ t.qty_show ?? 0 }}"
+                    data-entry="{{ t.avg_entry_price ?? t.entry_real ?? t.entry_ref ?? 0 }}"
+                    data-side="{{ t.side }}"
+                    data-mark="{{ t.pos_last_price ?? 0 }}"
                     style="background:#1a2a3a;color:#6ad;border:1px solid #2a4a6a;
                            padding:2px 8px;font-size:11px;border-radius:3px;cursor:pointer;margin-top:3px;">
                     Управление
@@ -1200,7 +1204,7 @@
     <!-- Частичное закрытие -->
     <div style="border:1px solid #2a2a2a;border-radius:4px;padding:12px;margin-bottom:12px;">
       <h4 style="margin:0 0 10px;font-size:12px;color:#9bd;">Частичное закрытие</h4>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px;">
         <label style="font-size:12px;color:#aab;">% позиции:
           <input id="mgmt-pct" type="number" min="1" max="100" value="50" step="1"
             style="width:60px;padding:2px 4px;background:#111;border:1px solid #444;color:#e0e0e0;margin-left:4px;">
@@ -1209,7 +1213,8 @@
           Закрыть сейчас
         </button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;border-top:1px solid #252525;padding-top:8px;">
+      <div id="mgmt-hint-market" style="font-size:11px;color:#889;min-height:14px;margin-bottom:8px;padding-left:2px;"></div>
+      <div style="display:flex;gap:8px;align-items:center;border-top:1px solid #252525;padding-top:8px;margin-bottom:3px;">
         <label style="font-size:12px;color:#aab;">TP цена:
           <input id="mgmt-tp-price" type="number" step="any" min="0" placeholder="0.000000"
             style="width:110px;padding:2px 4px;background:#111;border:1px solid #444;color:#e0e0e0;margin-left:4px;">
@@ -1218,22 +1223,29 @@
           Выставить лимит
         </button>
       </div>
+      <div id="mgmt-hint-limit" style="font-size:11px;color:#889;min-height:14px;padding-left:2px;"></div>
     </div>
 
     <!-- Принудительный SL/TP -->
     <div style="border:1px solid #2a2a2a;border-radius:4px;padding:12px;">
       <h4 style="margin:0 0 10px;font-size:12px;color:#fa8;">Принудительный SL / TP</h4>
-      <div style="display:flex;gap:8px;margin-bottom:8px;">
-        <label style="font-size:12px;color:#aab;">SL:
-          <input id="mgmt-sl" type="number" step="any" min="0" placeholder="не менять"
-            style="width:110px;padding:2px 4px;background:#111;border:1px solid #444;color:#e0e0e0;margin-left:4px;">
-        </label>
-        <label style="font-size:12px;color:#aab;">TP:
-          <input id="mgmt-tp" type="number" step="any" min="0" placeholder="не менять"
-            style="width:110px;padding:2px 4px;background:#111;border:1px solid #444;color:#e0e0e0;margin-left:4px;">
-        </label>
+      <div style="display:flex;gap:8px;margin-bottom:2px;">
+        <div>
+          <label style="font-size:12px;color:#aab;">SL:
+            <input id="mgmt-sl" type="number" step="any" min="0" placeholder="не менять"
+              style="width:110px;padding:2px 4px;background:#111;border:1px solid #444;color:#e0e0e0;margin-left:4px;">
+          </label>
+          <div id="mgmt-hint-sl" style="font-size:11px;min-height:14px;margin-top:2px;padding-left:22px;"></div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:#aab;">TP:
+            <input id="mgmt-tp" type="number" step="any" min="0" placeholder="не менять"
+              style="width:110px;padding:2px 4px;background:#111;border:1px solid #444;color:#e0e0e0;margin-left:4px;">
+          </label>
+          <div id="mgmt-hint-tp" style="font-size:11px;min-height:14px;margin-top:2px;padding-left:22px;"></div>
+        </div>
       </div>
-      <p style="font-size:11px;color:#c84;margin:0 0 8px;">⚠ Отключает trailing и отменяет avg/TP-ордера</p>
+      <p style="font-size:11px;color:#c84;margin:6px 0 8px;">⚠ Отключает trailing и отменяет avg/TP-ордера</p>
       <button id="mgmt-set-stops" style="background:#3a2a1a;color:#fa8;border:1px solid #6a4a2a;padding:3px 14px;font-size:11px;border-radius:3px;cursor:pointer;">
         Применить
       </button>
@@ -1251,22 +1263,71 @@
     var tradeIdEl = document.getElementById('mgmt-trade-id');
     var statusEl  = document.getElementById('mgmt-status');
     var currentTradeId = null;
+    var currentQty = 0, currentEntry = 0, currentSide = 'long', currentMark = 0;
 
-    function openModal(id) {
+    // ── PnL-расчёт ──
+    function calcPnl(closePrice, qty) {
+        if (!closePrice || !qty || !currentEntry || closePrice <= 0 || qty <= 0 || currentEntry <= 0) return null;
+        return currentSide === 'long'
+            ? (closePrice - currentEntry) * qty
+            : (currentEntry - closePrice) * qty;
+    }
+    function fmtHint(val) {
+        if (val === null) return '';
+        var sign = val >= 0 ? '+' : '';
+        var col  = val >= 0 ? '#6c6' : '#f66';
+        return '<span style="color:' + col + '">≈ ' + sign + val.toFixed(2) + ' USDT</span>';
+    }
+    function setHintEl(id, html) {
+        var el = document.getElementById(id);
+        if (el) el.innerHTML = html;
+    }
+    function updateMarketHint() {
+        var pct = parseFloat(document.getElementById('mgmt-pct').value) || 0;
+        setHintEl('mgmt-hint-market', fmtHint(currentMark > 0 ? calcPnl(currentMark, currentQty * pct / 100) : null));
+    }
+    function updateLimitHint() {
+        var tp  = parseFloat(document.getElementById('mgmt-tp-price').value) || 0;
+        var pct = parseFloat(document.getElementById('mgmt-pct').value) || 0;
+        setHintEl('mgmt-hint-limit', fmtHint(tp > 0 ? calcPnl(tp, currentQty * pct / 100) : null));
+    }
+    function updateSLHint() {
+        var sl = parseFloat(document.getElementById('mgmt-sl').value) || 0;
+        setHintEl('mgmt-hint-sl', fmtHint(sl > 0 ? calcPnl(sl, currentQty) : null));
+    }
+    function updateTPHint() {
+        var tp = parseFloat(document.getElementById('mgmt-tp').value) || 0;
+        setHintEl('mgmt-hint-tp', fmtHint(tp > 0 ? calcPnl(tp, currentQty) : null));
+    }
+
+    document.getElementById('mgmt-pct').addEventListener('input', function(){ updateMarketHint(); updateLimitHint(); });
+    document.getElementById('mgmt-tp-price').addEventListener('input', updateLimitHint);
+    document.getElementById('mgmt-sl').addEventListener('input', updateSLHint);
+    document.getElementById('mgmt-tp').addEventListener('input', updateTPHint);
+
+    function openModal(id, btn) {
         currentTradeId = id;
+        currentQty   = parseFloat(btn.dataset.qty   || 0);
+        currentEntry = parseFloat(btn.dataset.entry  || 0);
+        currentSide  = btn.dataset.side || 'long';
+        currentMark  = parseFloat(btn.dataset.mark   || 0);
         tradeIdEl.textContent = id;
         document.getElementById('mgmt-pct').value = 50;
         document.getElementById('mgmt-tp-price').value = '';
         document.getElementById('mgmt-sl').value = '';
         document.getElementById('mgmt-tp').value = '';
         statusEl.textContent = '';
+        updateMarketHint();
+        setHintEl('mgmt-hint-limit', '');
+        setHintEl('mgmt-hint-sl', '');
+        setHintEl('mgmt-hint-tp', '');
         modal.style.display = 'flex';
     }
     function closeModal() { modal.style.display = 'none'; currentTradeId = null; }
 
     document.addEventListener('click', function(e){
         var btn = e.target.closest && e.target.closest('.btn-manage');
-        if (btn) openModal(parseInt(btn.dataset.id));
+        if (btn) openModal(parseInt(btn.dataset.id), btn);
     });
     btnClose.addEventListener('click', closeModal);
     modal.addEventListener('click', function(e){ if (e.target === modal) closeModal(); });
