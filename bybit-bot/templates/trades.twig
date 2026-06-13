@@ -1264,8 +1264,9 @@
     }
     function closeModal() { modal.style.display = 'none'; currentTradeId = null; }
 
-    document.querySelectorAll('.btn-manage').forEach(function(btn){
-        btn.addEventListener('click', function(){ openModal(parseInt(btn.dataset.id)); });
+    document.addEventListener('click', function(e){
+        var btn = e.target.closest && e.target.closest('.btn-manage');
+        if (btn) openModal(parseInt(btn.dataset.id));
     });
     btnClose.addEventListener('click', closeModal);
     modal.addEventListener('click', function(e){ if (e.target === modal) closeModal(); });
