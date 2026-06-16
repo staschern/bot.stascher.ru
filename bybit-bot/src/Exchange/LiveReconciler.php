@@ -992,7 +992,7 @@ final class LiveReconciler
 
         $stmt = $pdo->prepare(
             "SELECT t.id, t.symbol FROM trades t
-             WHERE t.exchange = :exch
+             WHERE t.mode = :exch
                AND t.status IN ('OPEN','AVERAGED')
                AND t.closed_at IS NULL" .
             $this->accountFilter('t.account_id') .

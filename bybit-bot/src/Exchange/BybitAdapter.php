@@ -1620,6 +1620,88 @@ final class BybitAdapter implements ExchangeAdapter
     }
 
     /**
+     * Подтянуть realized PnL закрытого трейда из истории Bybit и сохранить в БД.
+     * Используется кнопкой «⟳ PnL» рядом с Details в таблице закрытых ордеров.
+     */
+    public function syncClosedPnl(int $tradeId): array
+    {
+        $pdo  = Database::pdo();
+        $stmt = $pdo->prepare(
+            "SELECT symbol, closed_at, realized_pnl_usdt FROM trades
+             WHERE id = :id AND mode = :mode LIMIT 1"
+        );
+        $stmt->execute([':id' => $tradeId, ':mode' => $this->exchange]);
+        $trade = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$trade) {
+            return ['ok' => false, 'error' => 'trade_not_found'];
+        }
+        if ($trade['closed_at'] === null) {
+            return ['ok' => false, 'error' => 'trade_not_closed'];
+        }
+        if ($trade['realized_pnl_usdt'] !== null) {
+            return ['ok' => true, 'pnl' => (float)$trade['realized_pnl_usdt'], 'already_set' => true];
+        }
+
+        $symbol  = (string)$trade['symbol'];
+        $closedTs = strtotime((string)$trade['closed_at']);
+        $startMs  = (string)(($closedTs - 7200) * 1000); // -2h
+        $endMs    = (string)(($closedTs + 7200) * 1000); // +2h
+
+        try {
+            $resp = $this->client->getSigned('/v5/position/closed-pnl', [
+                'category'  => 'linear',
+                'symbol'    => $symbol,
+                'startTime' => $startMs,
+                'endTime'   => $endMs,
+                'limit'     => 20,
+            ]);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'error' => 'api_error: ' . $e->getMessage()];
+        }
+
+        if (($resp['category'] ?? '') !== Errors::SUCCESS) {
+            return ['ok' => false, 'error' => 'api_error: ' . ($resp['ret_msg'] ?? 'unknown')];
+        }
+
+        $list = $resp['result']['list'] ?? [];
+        if (empty($list)) {
+            return ['ok' => false, 'error' => 'no_closed_pnl_in_window'];
+        }
+
+        // Выбираем запись с наименьшим отклонением по времени от closed_at трейда.
+        $best    = null;
+        $bestDiff = PHP_INT_MAX;
+        foreach ($list as $entry) {
+            $entryTs   = isset($entry['createdTime']) ? (int)((int)$entry['createdTime'] / 1000) : null;
+            $diff      = $entryTs !== null ? abs($entryTs - $closedTs) : PHP_INT_MAX;
+            if ($diff < $bestDiff) {
+                $bestDiff = $diff;
+                $best     = $entry;
+            }
+        }
+
+        $pnl = isset($best['closedPnl']) ? (float)$best['closedPnl'] : null;
+        if ($pnl === null) {
+            return ['ok' => false, 'error' => 'closedPnl_missing_in_response'];
+        }
+
+        $newStatus = $pnl >= 0 ? 'CLOSED_PROFIT' : 'CLOSED_LOSS';
+        $now = self::nowIso();
+        $pdo->prepare(
+            "UPDATE trades SET realized_pnl_usdt = :pnl, status = :s
+             WHERE id = :id AND realized_pnl_usdt IS NULL"
+        )->execute([':pnl' => $pnl, ':s' => $newStatus, ':id' => $tradeId]);
+
+        EventRecorder::tradeEvent($tradeId, EventRecorder::INFO, 'sync_closed_pnl', [
+            'exchange' => $this->exchange,
+            'symbol'   => $symbol,
+            'pnl'      => $pnl,
+        ]);
+
+        return ['ok' => true, 'pnl' => $pnl, 'status' => $newStatus];
+    }
+
+    /**
      * Ручное закрытие открытой/усреднённой позиции для live/testnet.
      *
      * Делегирует в closePosition($tradeId, 'manual'), который посылает reduce-only

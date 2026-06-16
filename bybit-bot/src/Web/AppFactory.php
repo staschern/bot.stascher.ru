@@ -126,7 +126,8 @@ final class AppFactory
             $group->get('/trades/{id}', [TradesController::class, 'detail'])->setName('trade_detail');
             $group->post('/trades/{id}/label', [TradesController::class, 'setLabel'])->setName('trade_set_label');
             $group->post('/trades/{id}/close', [TradesController::class, 'manualClose'])->setName('trade_manual_close');
-            $group->post('/trades/{id}/sync',  [TradesController::class, 'forceSync'])->setName('trade_force_sync');
+            $group->post('/trades/{id}/sync',     [TradesController::class, 'forceSync'])->setName('trade_force_sync');
+            $group->post('/trades/{id}/sync-pnl', [TradesController::class, 'syncPnl'])->setName('trade_sync_pnl');
             // v0.8.0.12: восстановление отменённого conditional
             $group->post('/trades/{id}/restore', [TradesController::class, 'restore'])->setName('trade_restore');
             // Management: частичное закрытие и принудительный SL/TP

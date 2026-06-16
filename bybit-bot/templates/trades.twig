@@ -629,6 +629,13 @@
                                    padding:2px 6px;font-size:10px;border-radius:3px;cursor:pointer;">
                         ⟳
                     </button>
+                    {% elseif t.status in ['CLOSED_PROFIT','CLOSED_LOSS'] and t.mode != 'paper' %}
+                    <button type="button" class="btn-sync-pnl" data-trade-id="{{ t.id }}"
+                            title="Обновить PnL из истории аккаунта"
+                            style="background:#1a1a2a;color:#77a;border:1px solid #335;
+                                   padding:2px 6px;font-size:10px;border-radius:3px;cursor:pointer;">
+                        ⟳
+                    </button>
                     {% endif %}
                 </div>
                 {% if t.status in ['OPEN', 'AVERAGED', 'PENDING_CONDITIONAL'] %}
@@ -1150,6 +1157,42 @@
                 btn.disabled = false;
                 btn.textContent = origText;
                 alert('Ошибка: ' + (res.body && (res.body.error || res.body.msg) || res.status));
+            }
+        }).catch(function(err){
+            btn.disabled = false;
+            btn.textContent = origText;
+            alert('Сетевая ошибка: ' + err);
+        });
+    });
+
+    /* Кнопка ⟳ для закрытых ордеров — подтянуть PnL из истории аккаунта. */
+    document.addEventListener('click', function(e){
+        var btn = e.target.closest && e.target.closest('.btn-sync-pnl');
+        if (!btn) return;
+        var tradeId = btn.getAttribute('data-trade-id');
+        btn.disabled = true;
+        var origText = btn.textContent;
+        btn.textContent = '…';
+        fetch('/trades/' + tradeId + '/sync-pnl', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    '{}',
+        }).then(function(r){
+            return r.json().then(function(j){ return { status: r.status, body: j }; });
+        }).then(function(res){
+            if (res.status === 200 && res.body && res.body.ok) {
+                var pnl = typeof res.body.pnl === 'number' ? res.body.pnl.toFixed(4) : '?';
+                if (res.body.already_set) {
+                    alert('PnL уже установлен: ' + pnl + ' USDT');
+                    btn.disabled = false; btn.textContent = origText;
+                } else {
+                    alert('PnL обновлён: ' + (res.body.pnl >= 0 ? '+' : '') + pnl + ' USDT');
+                    window.location.reload();
+                }
+            } else {
+                btn.disabled = false;
+                btn.textContent = origText;
+                alert('Ошибка: ' + (res.body && res.body.error || res.status));
             }
         }).catch(function(err){
             btn.disabled = false;

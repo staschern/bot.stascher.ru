@@ -923,6 +923,44 @@ final class TradesController
     }
 
     /**
+     * POST /trades/{id}/sync-pnl — подтянуть realized PnL закрытого трейда из истории Bybit.
+     */
+    public function syncPnl(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        $tradeId = (int)($args['id'] ?? 0);
+        if ($tradeId === 0) {
+            $response->getBody()->write(json_encode(['ok' => false, 'error' => 'bad_id']));
+            return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+        }
+
+        $pdo   = Database::pdo();
+        $stmt  = $pdo->prepare('SELECT mode, account_id FROM trades WHERE id = :id');
+        $stmt->execute([':id' => $tradeId]);
+        $trade = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$trade) {
+            $response->getBody()->write(json_encode(['ok' => false, 'error' => 'not_found']));
+            return $response->withHeader('Content-Type', 'application/json')->withStatus(404);
+        }
+        if ((string)$trade['mode'] === 'paper') {
+            $response->getBody()->write(json_encode(['ok' => false, 'error' => 'not_supported_in_paper']));
+            return $response->withHeader('Content-Type', 'application/json')->withStatus(400);
+        }
+
+        try {
+            $accId = (isset($trade['account_id']) && $trade['account_id'] !== null) ? (int)$trade['account_id'] : null;
+            $adapter = $accId !== null
+                ? \BybitBot\Exchange\AdapterFactory::forAccount($accId)
+                : \BybitBot\Exchange\AdapterFactory::forExchange((string)$trade['mode']);
+            $result = $adapter->syncClosedPnl($tradeId);
+            $response->getBody()->write(json_encode(array_merge($result, ['trade_id' => $tradeId])));
+            return $response->withHeader('Content-Type', 'application/json');
+        } catch (\Throwable $e) {
+            $response->getBody()->write(json_encode(['ok' => false, 'error' => $e->getMessage()]));
+            return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+        }
+    }
+
+    /**
      * v0.8.0.13: POST /admin/cron-minute/run — принудительный запуск cron_minute.php из UI.
      * Синхронный (ждём завершения), возвращает stdout/stderr/exit_code в JSON.
      */
