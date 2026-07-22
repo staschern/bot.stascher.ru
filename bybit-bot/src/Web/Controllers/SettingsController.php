@@ -7,6 +7,7 @@ use BybitBot\Bybit\MarketInfo;
 use BybitBot\Bybit\SecretsService;
 use BybitBot\Core\Config;
 use BybitBot\Core\Database;
+use BybitBot\Core\DbCleanup;
 use BybitBot\Core\EventRecorder;
 use BybitBot\Core\Logger;
 use Psr\Http\Message\ResponseInterface;
@@ -590,6 +591,19 @@ final class SettingsController
                 break;
             case 'deposit-refresh':
                 $this->execCliCommand($root, 'deposit:refresh');
+                break;
+            case 'db-cleanup':
+                try {
+                    $result  = DbCleanup::run();
+                    $summary = DbCleanup::summary($result);
+                    Logger::get()->info('SettingsController: db-cleanup', $result['deleted']);
+                    EventRecorder::event(EventRecorder::INFO, 'db_cleanup_manual', null, array_merge(
+                        $result['deleted'],
+                        ['vacuum' => $result['vacuum'] ? 1 : 0]
+                    ));
+                } catch (\Throwable $e) {
+                    Logger::get()->error('SettingsController: db-cleanup failed: ' . $e->getMessage());
+                }
                 break;
             default:
                 Logger::get()->warning('SettingsController: неизвестное действие', ['action' => $act]);

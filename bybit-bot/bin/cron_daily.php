@@ -20,6 +20,7 @@ use BybitBot\Bybit\MarketInfo;
 use BybitBot\Core\Bootstrap;
 use BybitBot\Core\Database;
 use BybitBot\Core\CronGuard;
+use BybitBot\Core\DbCleanup;
 use BybitBot\Core\EventRecorder;
 use BybitBot\Core\Lock;
 use BybitBot\Core\Logger;
@@ -87,7 +88,7 @@ try {
     try {
         $cutoffUtc = gmdate('Y-m-d\TH:i:s\Z', time() - 30 * 86400);
         $stmt = Database::pdo()->prepare(
-            'DELETE FROM signals WHERE saved_at_utc < :cutoff'
+            "DELETE FROM signals WHERE saved_at_utc < :cutoff AND (decision IS NULL OR decision != 'accepted')"
         );
         $stmt->execute([':cutoff' => $cutoffUtc]);
         $signalsDeleted = $stmt->rowCount();
@@ -128,14 +129,27 @@ try {
         ]);
     }
 
+    // ───────────────────────────────────────────────────────
+    // 5. Очистка старых данных (api_calls, events, cron_runs, trade_events и т.д.)
+    // ───────────────────────────────────────────────────────
+    $cleanupSummary = '';
+    try {
+        $cleanResult    = DbCleanup::run();
+        $cleanupSummary = DbCleanup::summary($cleanResult);
+        EventRecorder::event(EventRecorder::INFO, 'db_cleanup', null, $cleanResult['deleted']);
+    } catch (\Throwable $e) {
+        Logger::get()->warning('cron_daily: db_cleanup failed: ' . $e->getMessage());
+    }
+
     $msg = sprintf(
-        'instruments=%d resolved=%d still_unresolved=%d signals_deleted=%d snap_written=%d snap_skipped=%d',
+        'instruments=%d resolved=%d still_unresolved=%d signals_deleted=%d snap_written=%d snap_skipped=%d cleanup=[%s]',
         $instrumentsCount,
         $reresolved['resolved'],
         $reresolved['still_unresolved'],
         $signalsDeleted,
         $snapWritten,
-        $snapSkipped
+        $snapSkipped,
+        $cleanupSummary
     );
     $guard->success($msg);
 } catch (\Throwable $e) {

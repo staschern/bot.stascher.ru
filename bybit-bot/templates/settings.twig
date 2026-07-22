@@ -505,7 +505,17 @@
             <input type="hidden" name="action" value="deposit-refresh">
             <button type="submit" class="btn btn-secondary">Deposit Refresh</button>
         </form>
+        <form method="POST" action="/settings/action"
+              onsubmit="return confirm('Запустить очистку БД?\n\nУдалит:\n• api_calls > 14 дней\n• events > 90 дней\n• cron_runs > 60 дней\n• trade_events закрытых сделок > 90 дней\n• bybit_health_pings > 7 дней\n• auth_attempts > 7 дней\n\nЗатем выполнит VACUUM. Данные сделок не затрагиваются.')">
+            <input type="hidden" name="action" value="db-cleanup">
+            <button type="submit" class="btn btn-warning">🗑 Очистить БД</button>
+        </form>
     </div>
+    <p style="margin:8px 0 0;font-size:11px;color:#666;">
+        «Очистить БД» запускается автоматически каждую ночь (cron_daily).
+        Кнопка — для принудительного запуска вне расписания.
+        Сделки, ордера, позиции, снапшоты статистики <strong>не удаляются</strong>.
+    </p>
 </div>
 
 </main>
