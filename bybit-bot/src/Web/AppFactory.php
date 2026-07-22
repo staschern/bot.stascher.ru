@@ -15,6 +15,7 @@ use BybitBot\Web\Controllers\SettingsController;
 use BybitBot\Web\Controllers\StatsController;
 use BybitBot\Web\Controllers\ManagementController;
 use BybitBot\Web\Controllers\TradesController;
+use BybitBot\Web\Controllers\OrphanRecoveryController;
 use BybitBot\Web\Middleware\AuthMiddleware;
 use Slim\App;
 use Slim\Factory\AppFactory as SlimAppFactory;
@@ -135,6 +136,10 @@ final class AppFactory
             $group->post('/trades/{id}/manage/set-stops',     [ManagementController::class, 'setStops'])->setName('trade_manage_set_stops');
             // v0.8.0.13: принудительный запуск cron_minute из UI
             $group->post('/admin/cron-minute/run', [TradesController::class, 'runCronMinute'])->setName('cron_minute_run');
+
+            // Orphan position recovery
+            $group->get ('/orphans/scan',    [OrphanRecoveryController::class, 'scan'])->setName('orphans_scan');
+            $group->post('/orphans/recover', [OrphanRecoveryController::class, 'recover'])->setName('orphans_recover');
 
             // Manual entry (Strategy 2)
             $group->post('/manual/submit',       [ManualController::class, 'submit'])->setName('manual_submit');

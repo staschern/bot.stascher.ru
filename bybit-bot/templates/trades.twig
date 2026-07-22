@@ -386,6 +386,12 @@
         <button type="button" id="btn-refresh-trades"
                 style="padding:4px 12px;background:#2d5da8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;">Обновить</button>
         <span id="refresh-status">Авто-обновление каждые 30 сек</span>
+        {% if mode == 'live' or mode == 'testnet' %}
+        <button type="button" id="btn-orphan-scan"
+                style="padding:4px 12px;background:#4a2d0a;color:#f8b44a;border:1px solid #8a5a2a;border-radius:4px;cursor:pointer;font-size:11px;margin-left:auto;">
+            ⚠ Потерянные позиции
+        </button>
+        {% endif %}
     </div>
 
     <form method="GET" action="/trades" class="filter-bar" id="trades-filter-form">
@@ -1298,6 +1304,62 @@
   </div>
 </div>
 
+{% if mode == 'live' or mode == 'testnet' %}
+<div id="modal-orphan" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1100;align-items:flex-start;justify-content:center;padding-top:40px;overflow-y:auto;">
+  <div style="background:#1a1a1a;border:1px solid #6a4a1a;border-radius:8px;padding:20px;width:780px;max-width:96vw;position:relative;">
+    <button id="orphan-modal-close" style="position:absolute;top:8px;right:12px;background:none;border:none;color:#888;font-size:18px;cursor:pointer;">✕</button>
+    <h3 style="margin:0 0 14px;font-size:14px;color:#f8c060;">⚠ Восстановление потерянных позиций</h3>
+
+    <!-- Выбор аккаунта + кнопка Сканировать -->
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;">
+      <label style="font-size:12px;color:#aab;">Аккаунт:
+        <select id="orphan-account" style="margin-left:6px;background:#111;border:1px solid #555;color:#e0e0e0;padding:4px 8px;border-radius:4px;font-size:12px;">
+          {% for acc in filter_accounts %}
+            {% if acc.network == mode %}
+              <option value="{{ acc.id }}">{{ acc.name }} (#{{ acc.id }})</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </label>
+      <button id="orphan-btn-scan" style="padding:5px 14px;background:#2d5da8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;">Сканировать</button>
+      <span id="orphan-scan-status" style="font-size:11px;color:#779;"></span>
+    </div>
+
+    <!-- Результаты сканирования -->
+    <div id="orphan-results" style="display:none;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;">
+        <thead>
+          <tr style="color:#aab;border-bottom:1px solid #333;">
+            <th style="padding:5px 6px;text-align:left;"><input type="checkbox" id="orphan-check-all" title="Выбрать все"></th>
+            <th style="padding:5px 6px;text-align:left;">Symbol / Side</th>
+            <th style="padding:5px 6px;text-align:right;">Qty</th>
+            <th style="padding:5px 6px;text-align:right;">Entry</th>
+            <th style="padding:5px 6px;text-align:right;">Unreal. PnL</th>
+            <th style="padding:5px 6px;text-align:left;">SL <span style="color:#f88;font-weight:700;">*</span></th>
+            <th style="padding:5px 6px;text-align:left;">TP <span style="color:#666;font-weight:400;">(опц.)</span></th>
+            <th style="padding:5px 6px;text-align:left;">Leverage</th>
+          </tr>
+        </thead>
+        <tbody id="orphan-tbody"></tbody>
+      </table>
+      <p id="orphan-no-results" style="display:none;color:#666;font-style:italic;">Нет потерянных позиций — все открытые позиции на Bybit отслеживаются ботом.</p>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button id="orphan-btn-recover" style="padding:6px 18px;background:#4a6a1a;color:#aeff6a;border:1px solid #6a9a2a;border-radius:4px;cursor:pointer;font-size:13px;" disabled>
+          Восстановить выбранные
+        </button>
+        <span id="orphan-recover-status" style="font-size:12px;color:#779;"></span>
+      </div>
+    </div>
+
+    <!-- Результаты восстановления -->
+    <div id="orphan-recover-results" style="display:none;margin-top:12px;border-top:1px solid #333;padding-top:12px;">
+      <h4 style="margin:0 0 8px;font-size:12px;color:#ccd;">Результат:</h4>
+      <div id="orphan-recover-list" style="font-size:12px;"></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
 // ── Управление сделкой ──
 (function(){
@@ -1443,5 +1505,200 @@
     });
 })();
 </script>
+
+{% if mode == 'live' or mode == 'testnet' %}
+<script>
+// ── Потерянные позиции ──
+(function(){
+    var btnOpen     = document.getElementById('btn-orphan-scan');
+    var modal       = document.getElementById('modal-orphan');
+    var btnClose    = document.getElementById('orphan-modal-close');
+    var btnScan     = document.getElementById('orphan-btn-scan');
+    var btnRecover  = document.getElementById('orphan-btn-recover');
+    var scanStatus  = document.getElementById('orphan-scan-status');
+    var recoverStatus = document.getElementById('orphan-recover-status');
+    var resultsDiv  = document.getElementById('orphan-results');
+    var noResults   = document.getElementById('orphan-no-results');
+    var tbody       = document.getElementById('orphan-tbody');
+    var checkAll    = document.getElementById('orphan-check-all');
+    var recoverDiv  = document.getElementById('orphan-recover-results');
+    var recoverList = document.getElementById('orphan-recover-list');
+
+    if (!btnOpen) return;
+
+    btnOpen.addEventListener('click', function(){ modal.style.display = 'flex'; });
+    btnClose.addEventListener('click', function(){ modal.style.display = 'none'; });
+    modal.addEventListener('click', function(e){ if (e.target === modal) modal.style.display = 'none'; });
+
+    checkAll.addEventListener('change', function(){
+        tbody.querySelectorAll('.orphan-row-check:not(:disabled)').forEach(function(cb){ cb.checked = checkAll.checked; });
+        updateRecoverBtn();
+    });
+
+    function updateRecoverBtn() {
+        var any = tbody.querySelector('.orphan-row-check:not(:disabled):checked');
+        btnRecover.disabled = !any;
+    }
+
+    function fmtPnl(v) {
+        if (v === null || v === undefined) return '—';
+        var s = v >= 0 ? '+' : '';
+        var c = v >= 0 ? '#6aff6a' : '#ff6a6a';
+        return '<span style="color:' + c + '">' + s + parseFloat(v).toFixed(2) + '</span>';
+    }
+
+    btnScan.addEventListener('click', function(){
+        var accId = document.getElementById('orphan-account').value;
+        if (!accId) { scanStatus.textContent = 'Выберите аккаунт'; return; }
+        btnScan.disabled = true;
+        scanStatus.textContent = 'Сканирую…';
+        resultsDiv.style.display = 'none';
+        recoverDiv.style.display = 'none';
+        tbody.innerHTML = '';
+
+        fetch('/orphans/scan?account_id=' + encodeURIComponent(accId), {credentials:'same-origin'})
+            .then(function(r){ return r.json(); })
+            .then(function(j){
+                btnScan.disabled = false;
+                if (!j.ok) { scanStatus.textContent = 'Ошибка: ' + (j.error || 'unknown'); return; }
+                scanStatus.textContent = 'Аккаунт: ' + (j.account_name || '#' + j.account_id);
+                resultsDiv.style.display = 'block';
+
+                var positions = j.positions || [];
+                var orphans = positions.filter(function(p){ return !p.conflict; });
+
+                if (positions.length === 0 || orphans.length === 0) {
+                    if (positions.length === 0) {
+                        noResults.textContent = 'Нет открытых позиций на Bybit.';
+                    } else {
+                        noResults.textContent = 'Нет потерянных позиций — все ' + positions.length + ' позиций уже отслеживаются ботом.';
+                    }
+                    noResults.style.display = 'block';
+                    tbody.innerHTML = '';
+                    // still show conflicts
+                }
+
+                noResults.style.display = (positions.length === 0) ? 'block' : 'none';
+                if (positions.length === 0) { tbody.innerHTML = ''; return; }
+                noResults.style.display = 'none';
+
+                positions.forEach(function(pos, idx){
+                    var isConflict = !!pos.conflict;
+                    var slVal  = pos.sl_price  ? pos.sl_price  : '';
+                    var tpVal  = pos.tp_price  ? pos.tp_price  : '';
+                    var sideCol = pos.side === 'long' ? '#6aff6a' : '#ff6a6a';
+                    var rowStyle = isConflict ? 'background:#2a1a1a;opacity:0.7;' : '';
+                    var conflictBadge = isConflict
+                        ? '<span style="margin-left:6px;padding:1px 5px;background:#3a1f1f;color:#f88;border:1px solid #662020;border-radius:3px;font-size:10px;font-weight:700;">конфликт: ' + pos.conflict + '</span>'
+                        : '';
+
+                    var tr = document.createElement('tr');
+                    tr.style.cssText = rowStyle;
+                    tr.innerHTML = '<td style="padding:5px 6px;">'
+                        + '<input type="checkbox" class="orphan-row-check" data-idx="' + idx + '"'
+                        + (isConflict ? ' disabled title="' + pos.conflict + '"' : '')
+                        + '></td>'
+                        + '<td style="padding:5px 6px;">'
+                        + '<strong>' + pos.symbol + '</strong>'
+                        + ' <span style="color:' + sideCol + '">' + pos.side + '</span>'
+                        + conflictBadge + '</td>'
+                        + '<td style="padding:5px 6px;text-align:right;">' + pos.qty + '</td>'
+                        + '<td style="padding:5px 6px;text-align:right;">' + parseFloat(pos.entry_price).toFixed(4) + '</td>'
+                        + '<td style="padding:5px 6px;text-align:right;">' + fmtPnl(pos.unrealised_pnl) + '</td>'
+                        + '<td style="padding:5px 4px;">'
+                        + (isConflict ? '<span style="color:#666;">—</span>' : '<input type="number" class="orphan-sl" data-idx="' + idx + '" step="any" min="0" value="' + slVal + '" placeholder="обязателен" style="width:100px;padding:2px 4px;background:#111;border:1px solid ' + (slVal ? '#444' : '#883030') + ';color:#e0e0e0;border-radius:3px;font-size:11px;">')
+                        + '</td>'
+                        + '<td style="padding:5px 4px;">'
+                        + (isConflict ? '<span style="color:#666;">—</span>' : '<input type="number" class="orphan-tp" data-idx="' + idx + '" step="any" min="0" value="' + tpVal + '" placeholder="авто" style="width:100px;padding:2px 4px;background:#111;border:1px solid #444;color:#e0e0e0;border-radius:3px;font-size:11px;">')
+                        + '</td>'
+                        + '<td style="padding:5px 6px;color:#888;">x' + pos.leverage + '</td>';
+                    tbody.appendChild(tr);
+
+                    // store pos data on the checkbox
+                    var cb = tr.querySelector('.orphan-row-check');
+                    if (cb) {
+                        cb._posData = pos;
+                        cb.addEventListener('change', updateRecoverBtn);
+                    }
+                });
+
+                checkAll.checked = false;
+                updateRecoverBtn();
+            })
+            .catch(function(e){ btnScan.disabled = false; scanStatus.textContent = 'Ошибка: ' + e; });
+    });
+
+    btnRecover.addEventListener('click', function(){
+        var accId = document.getElementById('orphan-account').value;
+        var checked = tbody.querySelectorAll('.orphan-row-check:not(:disabled):checked');
+        if (!checked.length) return;
+
+        // collect + validate
+        var toRecover = [];
+        var invalid = false;
+        checked.forEach(function(cb){
+            var idx  = cb.dataset.idx;
+            var pos  = cb._posData;
+            var slEl = tbody.querySelector('.orphan-sl[data-idx="' + idx + '"]');
+            var tpEl = tbody.querySelector('.orphan-tp[data-idx="' + idx + '"]');
+            var slV  = slEl ? parseFloat(slEl.value) : 0;
+            var tpV  = tpEl ? parseFloat(tpEl.value) : 0;
+            if (!slV || slV <= 0) {
+                if (slEl) slEl.style.borderColor = '#ff4444';
+                invalid = true;
+            } else {
+                if (slEl) slEl.style.borderColor = '#444';
+                toRecover.push({
+                    symbol:      pos.symbol,
+                    side:        pos.side,
+                    qty:         pos.qty,
+                    entry_price: pos.entry_price,
+                    leverage:    pos.leverage,
+                    sl_price:    slV,
+                    tp_price:    (tpV > 0 ? tpV : null),
+                });
+            }
+        });
+        if (invalid) { recoverStatus.textContent = 'Укажите SL для всех выбранных позиций'; recoverStatus.style.color = '#f88'; return; }
+
+        btnRecover.disabled = true;
+        recoverStatus.textContent = 'Восстанавливаю…';
+        recoverStatus.style.color = '#779';
+
+        fetch('/orphans/recover', {
+            method:'POST', credentials:'same-origin',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ account_id: parseInt(accId), positions: toRecover })
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+            recoverDiv.style.display = 'block';
+            var html = '';
+            (j.results || []).forEach(function(r){
+                var icon = r.ok ? '✓' : '✗';
+                var col  = r.ok ? '#6aff6a' : '#ff6a6a';
+                var msg  = r.ok
+                    ? ('Trade #' + r.trade_id + (r.setup === 'deferred' ? ' (настройки будут применены при следующем cron)' : ''))
+                    : (r.error || 'ошибка');
+                html += '<div style="padding:3px 0;"><span style="color:' + col + '">' + icon + ' ' + r.symbol + '</span> — ' + msg + '</div>';
+            });
+            recoverList.innerHTML = html || '<span style="color:#666;">нет результатов</span>';
+            recoverStatus.textContent = j.ok ? 'Готово' : 'Частичная ошибка';
+            recoverStatus.style.color = j.ok ? '#6aff6a' : '#f88';
+            if (j.ok) {
+                setTimeout(function(){ location.reload(); }, 1800);
+            } else {
+                btnRecover.disabled = false;
+            }
+        })
+        .catch(function(e){
+            recoverStatus.textContent = 'Ошибка: ' + e;
+            recoverStatus.style.color = '#f88';
+            btnRecover.disabled = false;
+        });
+    });
+})();
+</script>
+{% endif %}
 </main>
 {% endblock %}
