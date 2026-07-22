@@ -44,6 +44,20 @@ final class BybitAccountsRepo
     }
 
     /**
+     * Только включённые (enabled=1) и не архивированные аккаунты, без фильтра по network.
+     * Используется в UI-фильтрах и выпадающих списках — выключенные аккаунты не отображаются.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public static function listEnabled(): array
+    {
+        $rows = Database::pdo()->query(
+            'SELECT * FROM bybit_accounts WHERE enabled = 1 AND archived_at IS NULL ORDER BY id ASC'
+        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        return array_map([self::class, 'normalizeRow'], $rows);
+    }
+
+    /**
      * Аккаунты, подходящие по network с master switch:
      *   * enabled=1;
      *   * archived_at IS NULL;

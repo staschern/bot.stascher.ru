@@ -105,6 +105,9 @@ final class EquityService
         if ($hasAccFilter) {
             $sql .= " AND t.account_id = :acc";
             $bind[':acc'] = $accountId;
+        } elseif ($mode !== 'paper') {
+            // Не учитываем позиции выключенных аккаунтов в общем расчёте.
+            $sql .= " AND (t.account_id IS NULL OR t.account_id IN (SELECT id FROM bybit_accounts WHERE enabled = 1 AND archived_at IS NULL))";
         }
         $stmt = $pdo->prepare($sql);
         $stmt->execute($bind);
@@ -149,6 +152,9 @@ final class EquityService
         if ($hasAccFilter) {
             $sqlR .= " AND account_id = :acc";
             $bindR[':acc'] = $accountId;
+        } elseif ($mode !== 'paper') {
+            // Не учитываем PnL выключенных аккаунтов в общем расчёте.
+            $sqlR .= " AND (account_id IS NULL OR account_id IN (SELECT id FROM bybit_accounts WHERE enabled = 1 AND archived_at IS NULL))";
         }
         $stmt = $pdo->prepare($sqlR);
         $stmt->execute($bindR);

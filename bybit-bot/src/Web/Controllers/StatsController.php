@@ -39,7 +39,14 @@ final class StatsController
         $filterAccount    = ($filterAccountRaw !== '' && ctype_digit($filterAccountRaw))
             ? (int)$filterAccountRaw
             : null;
-        $accClause = $filterAccount !== null ? ' AND account_id = :acc' : '';
+        if ($filterAccount !== null) {
+            $accClause = ' AND account_id = :acc';
+        } elseif ($mode !== 'paper') {
+            // В общем режиме скрываем сделки выключенных аккаунтов.
+            $accClause = ' AND (account_id IS NULL OR account_id IN (SELECT id FROM bybit_accounts WHERE enabled = 1 AND archived_at IS NULL))';
+        } else {
+            $accClause = '';
+        }
 
         $d0 = (float)Config::get('paper_initial_deposit_usdt', null, 300.0);
 
@@ -237,7 +244,7 @@ final class StatsController
 
         // v0.9.0-step7 task6: список аккаунтов для selector
         $allAccounts = [];
-        foreach (BybitAccountsRepo::listAll(false) as $a) {
+        foreach (BybitAccountsRepo::listEnabled() as $a) {
             $allAccounts[] = [
                 'id'   => (int)$a['id'],
                 'name' => (string)$a['name'],

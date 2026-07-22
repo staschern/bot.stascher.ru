@@ -134,6 +134,10 @@ final class TradesController
         if ($filterAccount !== null) {
             $where[] = "t.account_id = :account_id";
             $bind[':account_id'] = $filterAccount;
+        } else {
+            // Скрываем сделки выключенных аккаунтов в общем режиме.
+            // Для paper trades account_id IS NULL — первая ветка OR их пропускает.
+            $where[] = "(t.account_id IS NULL OR t.account_id IN (SELECT id FROM bybit_accounts WHERE enabled = 1 AND archived_at IS NULL))";
         }
 
         // v0.9.0-step9 task2: фильтр по периоду.
@@ -453,6 +457,8 @@ final class TradesController
         if ($filterAccount !== null && ($currentMode === 'testnet' || $currentMode === 'live')) {
             $countsSql .= " AND account_id = :acc";
             $countsBind[':acc'] = $filterAccount;
+        } elseif ($filterAccount === null && ($currentMode === 'testnet' || $currentMode === 'live')) {
+            $countsSql .= " AND (account_id IS NULL OR account_id IN (SELECT id FROM bybit_accounts WHERE enabled = 1 AND archived_at IS NULL))";
         }
         $countsSql .= " GROUP BY status, side";
         $countsStmt = $pdo->prepare($countsSql);
@@ -483,12 +489,11 @@ final class TradesController
             }
         }
 
-        // v0.9.0-step6: список всех аккаунтов (вкл./выкл., не archived)
-        // для select-фильтра в filter-bar. Показываем все для testnet и все для live,
-        // чтобы можно было отфильтровать исторические сделки по выключенным аккаунтам.
+        // Список enabled аккаунтов для select-фильтра в filter-bar.
+        // Показываем только включённые, т.к. сделки выключенных не отображаются.
         $filterAccounts = [];
         $filterAccountName = '';
-        foreach (BybitAccountsRepo::listAll() as $a) {
+        foreach (BybitAccountsRepo::listEnabled() as $a) {
             $filterAccounts[] = [
                 'id'      => (int)$a['id'],
                 'name'    => (string)$a['name'],
