@@ -49,44 +49,45 @@ final class StatsController
             $accClause = '';
         }
 
-        // D0 — стартовый депозит для построения equity-кривой и расчёта % за весь период.
-        // paper: берём из настройки paper_initial_deposit_usdt.
-        // testnet/live: берём первый deposit_snapshot для режима (создаётся cron_daily).
-        //               Если снапшотов нет — фолбэк на текущий баланс с биржи (для конкретного
-        //               аккаунта) или на paper-значение (последний резерв).
+        // D0 — стартовый/опорный депозит для equity-кривой и итогового расчёта %.
+        //
+        // paper  → paper_initial_deposit_usdt из Settings.
+        //
+        // live/testnet + конкретный аккаунт:
+        //   1) Ранний equity_snapshot для этого аккаунта (заполняется cron_daily / backfill).
+        //   2) Текущий баланс с биржи по этому аккаунту (API-вызов).
+        //
+        // live/testnet + «все» аккаунты:
+        //   Сумма текущих балансов всех enabled аккаунтов через EquityService.
+        //   deposit_snapshots не содержит account_id → для агрегата там может лежать
+        //   старое одно-аккаунтовое значение, которое не отражает реальную общую сумму.
         if ($mode === 'paper') {
             $d0 = (float)Config::get('paper_initial_deposit_usdt', null, 300.0);
-        } else {
-            // Ищем самый ранний deposit_snapshot для этого режима (account_id не хранится здесь)
-            $d0SnapStmt = $pdo->prepare(
-                'SELECT value FROM deposit_snapshots WHERE mode = :m ORDER BY ts ASC LIMIT 1'
+        } elseif ($filterAccount !== null) {
+            // Конкретный аккаунт: пробуем ранний equity_snapshot
+            $eqStmt = $pdo->prepare(
+                'SELECT deposit_usdt FROM equity_snapshots
+                  WHERE mode = :m AND account_id = :acc
+                  ORDER BY period_start ASC LIMIT 1'
             );
-            $d0SnapStmt->execute([':m' => $mode]);
-            $d0Row = $d0SnapStmt->fetch(\PDO::FETCH_ASSOC);
-
-            if ($d0Row !== false) {
-                $d0 = (float)$d0Row['value'];
+            $eqStmt->execute([':m' => $mode, ':acc' => $filterAccount]);
+            $eqRow = $eqStmt->fetch(\PDO::FETCH_ASSOC);
+            if ($eqRow !== false) {
+                $d0 = (float)$eqRow['deposit_usdt'];
             } else {
-                // Нет deposit_snapshots — ищем ранний equity_snapshot (самый старый period_start)
-                $eqSnap = $pdo->prepare(
-                    'SELECT deposit_usdt FROM equity_snapshots
-                      WHERE mode = :m' . ($filterAccount !== null ? ' AND account_id = :acc' : ' AND account_id IS NULL') . '
-                      ORDER BY period_start ASC LIMIT 1'
-                );
-                $eqBind = [':m' => $mode];
-                if ($filterAccount !== null) { $eqBind[':acc'] = $filterAccount; }
-                $eqSnap->execute($eqBind);
-                $eqRow = $eqSnap->fetch(\PDO::FETCH_ASSOC);
-                if ($eqRow !== false) {
-                    $d0 = (float)$eqRow['deposit_usdt'];
-                } else {
-                    // Крайний резерв — текущий баланс с биржи (API-вызов)
-                    try {
-                        $d0 = EquityService::computeEquity($mode, $filterAccount)['d0'];
-                    } catch (\Throwable $e) {
-                        $d0 = (float)Config::get('paper_initial_deposit_usdt', null, 300.0);
-                    }
+                try {
+                    $d0 = EquityService::computeEquity($mode, $filterAccount)['d0'];
+                } catch (\Throwable $e) {
+                    $d0 = (float)Config::get('paper_initial_deposit_usdt', null, 300.0);
                 }
+            }
+        } else {
+            // Все аккаунты: суммируем балансы всех enabled аккаунтов через EquityService.
+            // Это отражает реальный суммарный капитал под управлением.
+            try {
+                $d0 = EquityService::computeEquity($mode, null)['d0'];
+            } catch (\Throwable $e) {
+                $d0 = (float)Config::get('paper_initial_deposit_usdt', null, 300.0);
             }
         }
 
