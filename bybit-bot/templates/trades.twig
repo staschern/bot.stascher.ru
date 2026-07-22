@@ -1538,6 +1538,8 @@
     function updateRecoverBtn() {
         var any = tbody.querySelector('.orphan-row-check:not(:disabled):checked');
         btnRecover.disabled = !any;
+        btnRecover.style.opacity  = any ? '1'           : '0.4';
+        btnRecover.style.cursor   = any ? 'pointer'     : 'not-allowed';
     }
 
     function fmtPnl(v) {
@@ -1622,7 +1624,9 @@
                     }
                 });
 
-                checkAll.checked = false;
+                // auto-select all non-conflict rows
+                tbody.querySelectorAll('.orphan-row-check:not(:disabled)').forEach(function(cb){ cb.checked = true; });
+                checkAll.checked = true;
                 updateRecoverBtn();
             })
             .catch(function(e){ btnScan.disabled = false; scanStatus.textContent = 'Ошибка: ' + e; });
@@ -1631,7 +1635,11 @@
     btnRecover.addEventListener('click', function(){
         var accId = document.getElementById('orphan-account').value;
         var checked = tbody.querySelectorAll('.orphan-row-check:not(:disabled):checked');
-        if (!checked.length) return;
+        if (!checked.length) {
+            recoverStatus.textContent = 'Выберите хотя бы одну позицию (чекбокс слева)';
+            recoverStatus.style.color = '#f88';
+            return;
+        }
 
         // collect + validate
         var toRecover = [];
