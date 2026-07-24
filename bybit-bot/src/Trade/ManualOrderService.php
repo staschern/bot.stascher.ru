@@ -253,14 +253,16 @@ final class ManualOrderService
         }
 
         // v0.9.2: ограничение лота по max_loss_usdt для s2.
-        // onPositionOpened выставит sl_real на расстоянии 2 × market_coef × pTpUsed от entry.
-        // Гарантируем: qty × (entry × 2 × mc × pTpUsed / 100) ≤ max_loss_usdt.
+        // avg ставится за 15% до SL, q_avg = q1 × 2 × mc.
+        // Суммарные потери при SL: q1 × D × (1 + 0.15 × 2 × mc) ≤ max_loss_usdt.
         $maxLossUsdtS2  = (float)Config::get('max_loss_usdt', 's2', 0.0);
         if ($maxLossUsdtS2 > 0.0) {
             $marketCoefS2   = (float)Config::get('market_coef', 's1', 1.35);
             $slRealDistS2   = $entryRef * 2.0 * $marketCoefS2 * $pTpUsed / 100.0;
             if ($slRealDistS2 > 0.0) {
-                $qtyMaxByLossS2 = Rounding::roundToStep($maxLossUsdtS2 / $slRealDistS2, $qtyStep, Rounding::DOWN);
+                $avgQtyRatioS2   = 2.0 * $marketCoefS2;
+                $effectiveDistS2 = $slRealDistS2 * (1.0 + 0.15 * $avgQtyRatioS2);
+                $qtyMaxByLossS2 = Rounding::roundToStep($maxLossUsdtS2 / $effectiveDistS2, $qtyStep, Rounding::DOWN);
                 if ($qtyMaxByLossS2 > 0 && $qtyMaxByLossS2 < $orderQtyCoins) {
                     $orderQtyCoins = max(
                         Rounding::roundToStep($qtyMin, $qtyStep, Rounding::UP),

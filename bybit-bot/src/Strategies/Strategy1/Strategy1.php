@@ -420,14 +420,19 @@ final class Strategy1 implements StrategyInterface
         }
 
         // v0.9.2: ограничение лота по max_loss_usdt (если задано в strategy_settings).
-        // sl_real будет выставлен на расстоянии 2 × market_coef × p ниже/выше entry.
-        // Гарантируем: qty × (entry × 2 × mc × p / 100) ≤ max_loss_usdt.
-        // Если даже min lot превышает — оставляем min lot и sl_real скорректируется в onPositionOpened.
+        // sl_real будет на расстоянии D = entry × 2 × mc × p / 100 от entry.
+        // avg ставится за 15% до SL (т.е. на расстоянии 0.85 × D от entry).
+        // При срабатывании SL суммарные потери: q1 × D + q_avg × 0.15 × D,
+        //   где q_avg = q1 × 2 × mc.
+        // Поэтому: q1 × D × (1 + 0.15 × 2 × mc) ≤ max_loss_usdt
+        //   → q1_max = max_loss_usdt / (D × (1 + 0.15 × 2 × mc))
         $maxLossUsdt = (float)Config::get('max_loss_usdt', 's1', 0.0);
         if ($maxLossUsdt > 0.0) {
             $slRealDistance = $entryRef * 2.0 * $marketCoef * $p / 100.0;
             if ($slRealDistance > 0.0) {
-                $qtyMaxByLoss = Rounding::roundToStep($maxLossUsdt / $slRealDistance, $qtyStep, Rounding::DOWN);
+                $avgQtyRatio  = 2.0 * $marketCoef; // q_avg = q1 × avgQtyRatio
+                $effectiveDist = $slRealDistance * (1.0 + 0.15 * $avgQtyRatio);
+                $qtyMaxByLoss = Rounding::roundToStep($maxLossUsdt / $effectiveDist, $qtyStep, Rounding::DOWN);
                 if ($qtyMaxByLoss > 0 && $qtyMaxByLoss < $orderQtyCoins) {
                     $orderQtyCoins = max(
                         Rounding::roundToStep($qtyMin, $qtyStep, Rounding::UP),
@@ -618,8 +623,13 @@ final class Strategy1 implements StrategyInterface
         }
 
         // §6.4: avg
-        // avg_price = P_real - (P_real × sign × p × 1.5 × market_coef) / 100
-        $avgPriceRaw = $pReal - ($pReal * $sign * $p * 1.5 * $marketCoef) / 100.0;
+        // Если max_loss_usdt задан — avg за 15% до SL (85% пути от entry к slReal).
+        // Иначе — стандартная формула: 75% пути (1.5 × mc).
+        if ($maxLossUsdt > 0.0) {
+            $avgPriceRaw = $pReal + 0.85 * ($slReal - $pReal);
+        } else {
+            $avgPriceRaw = $pReal - ($pReal * $sign * $p * 1.5 * $marketCoef) / 100.0;
+        }
         if ($isLong) {
             $avgPrice = Rounding::roundToStep($avgPriceRaw, $tickSize, Rounding::DOWN);
         } else {
