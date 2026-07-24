@@ -547,6 +547,18 @@ final class SettingsController
                     Config::set('leverage_cap', (int)$lcVal, (string)$sid);
                 }
             }
+
+            // max_loss_usdt per strategy (0 = disabled)
+            if (isset($body["strategy_{$sid}_max_loss_usdt"]) && $body["strategy_{$sid}_max_loss_usdt"] !== '') {
+                $mlVal = filter_var($body["strategy_{$sid}_max_loss_usdt"], FILTER_VALIDATE_FLOAT);
+                if ($mlVal !== false && $mlVal >= 0.0) {
+                    $oldMl = (float)Config::get('max_loss_usdt', (string)$sid, 0.0);
+                    Config::set('max_loss_usdt', $mlVal, (string)$sid);
+                    if (abs($oldMl - $mlVal) > 0.001) {
+                        $diff["strategy_{$sid}_max_loss_usdt"] = ['from' => $oldMl, 'to' => $mlVal];
+                    }
+                }
+            }
         }
 
         // Записать событие

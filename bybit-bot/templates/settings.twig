@@ -246,6 +246,11 @@
                 <input type="number" step="1" name="strategy_{{ strat.id }}_leverage_cap"
                     value="{{ strat_settings[strat.id]['leverage_cap'] ?? '' }}" placeholder="10">
             </div>
+            <div class="form-group">
+                <label title="Лимит убытка по SL в USDT. Ограничивает объём лота при открытии (даже после усреднения потеря ≤ лимита). 0 = выключено.">Макс. убыток SL, USDT ({{ strat.id }})</label>
+                <input type="number" step="0.01" min="0" name="strategy_{{ strat.id }}_max_loss_usdt"
+                    value="{{ strat_settings[strat.id]['max_loss_usdt'] ?? '' }}" placeholder="0 = выкл.">
+            </div>
         </div>
         {% endfor %}
     </div>

@@ -419,6 +419,24 @@ final class Strategy1 implements StrategyInterface
             $orderQtyCoins = Rounding::roundToStep($orderQtyCoinsSafe, $qtyStep, Rounding::DOWN);
         }
 
+        // v0.9.2: ограничение лота по max_loss_usdt (если задано в strategy_settings).
+        // sl_real будет выставлен на расстоянии 2 × market_coef × p ниже/выше entry.
+        // Гарантируем: qty × (entry × 2 × mc × p / 100) ≤ max_loss_usdt.
+        // Если даже min lot превышает — оставляем min lot и sl_real скорректируется в onPositionOpened.
+        $maxLossUsdt = (float)Config::get('max_loss_usdt', 's1', 0.0);
+        if ($maxLossUsdt > 0.0) {
+            $slRealDistance = $entryRef * 2.0 * $marketCoef * $p / 100.0;
+            if ($slRealDistance > 0.0) {
+                $qtyMaxByLoss = Rounding::roundToStep($maxLossUsdt / $slRealDistance, $qtyStep, Rounding::DOWN);
+                if ($qtyMaxByLoss > 0 && $qtyMaxByLoss < $orderQtyCoins) {
+                    $orderQtyCoins = max(
+                        Rounding::roundToStep($qtyMin, $qtyStep, Rounding::UP),
+                        $qtyMaxByLoss
+                    );
+                }
+            }
+        }
+
         // Алиас для обратной совместимости с min_lot_overshoot guard и логами
         $unleveragedUsdt = $notionalUsdt;
         $orderQtyUsdt    = $orderQtyCoins * $entryRef; // фактический номинал после округления
@@ -533,6 +551,28 @@ final class Strategy1 implements StrategyInterface
             $slReal = Rounding::roundToStep($slRealRaw, $tickSize, Rounding::UP);
         } else {
             $slReal = Rounding::roundToStep($slRealRaw, $tickSize, Rounding::DOWN);
+        }
+
+        // v0.9.2: если max_loss_usdt задан — кэпаем sl_real так, чтобы потеря ≤ лимита.
+        // Применяется в приоритете над стратегическим sl_real (по ТЗ).
+        $stratId     = (string)($trade['strategy_id'] ?? 's1');
+        $maxLossUsdt = (float)Config::get('max_loss_usdt', $stratId, 0.0);
+        if ($maxLossUsdt > 0.0 && $qty > 0.0) {
+            $slRealLoss = $qty * abs($pReal - $slReal);
+            if ($slRealLoss > $maxLossUsdt) {
+                $slCappedRaw = $pReal - $sign * ($maxLossUsdt / $qty);
+                if ($isLong) {
+                    $slReal = Rounding::roundToStep($slCappedRaw, $tickSize, Rounding::UP);
+                } else {
+                    $slReal = Rounding::roundToStep($slCappedRaw, $tickSize, Rounding::DOWN);
+                }
+                Logger::get()->info("s1.onPositionOpened: sl_real скорректирован по max_loss_usdt={$maxLossUsdt}", [
+                    'trade_id'      => $tradeId,
+                    'sl_real_orig'  => round($slRealRaw, 8),
+                    'sl_real_capped'=> $slReal,
+                    'loss_orig'     => round($slRealLoss, 4),
+                ]);
+            }
         }
 
         // §6.3: trailing
@@ -732,8 +772,14 @@ final class Strategy1 implements StrategyInterface
         $trailingPctAvg   = 1.0;
         $triggerPriceRaw  = $pBe + $sign * $pBe * 2.0 / 100.0;
 
-        // §7.3: SL post_avg (защита 8% депо)
-        $maxLossUsdt  = 0.08 * $depositAnchor;
+        // §7.3: SL post_avg — лимит потерь.
+        // v0.9.2: используем max_loss_usdt из strategy_settings (per-strategy).
+        // Если не задан (0) — фолбэк на 8% депозита (исходное поведение).
+        $stratId     = (string)($trade['strategy_id'] ?? 's1');
+        $maxLossUsdt = (float)Config::get('max_loss_usdt', $stratId, 0.0);
+        if ($maxLossUsdt <= 0.0) {
+            $maxLossUsdt = 0.08 * $depositAnchor;
+        }
         $slDistance   = $maxLossUsdt / ($q1 + $q2);
         $slPostAvg    = $pBe - $sign * $slDistance;
 
