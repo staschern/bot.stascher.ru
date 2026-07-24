@@ -41,6 +41,30 @@
     .mode-filter { font-size:12px; margin-bottom:10px; }
     .mode-filter select { background:#1a1a1a; color:#e0e0e0; border:1px solid #333; padding:3px 6px; }
 
+    /* Переключатель вида */
+    .view-toggle { display:flex; gap:0; margin-bottom:14px; }
+    .view-btn {
+        padding:5px 14px; font-size:12px; cursor:pointer;
+        background:#1a1a1a; color:#779; border:1px solid #333;
+    }
+    .view-btn:first-child { border-radius:4px 0 0 4px; }
+    .view-btn:last-child  { border-radius:0 4px 4px 0; border-left:none; }
+    .view-btn.active { background:#1e3a5f; color:#9bd; border-color:#3a6a9a; }
+    .view-btn:hover:not(.active) { background:#222; color:#aab; }
+
+    /* Заголовок стратегии в compare-view */
+    .strat-header {
+        font-size:12px; font-weight:600; padding:5px 8px; border-radius:3px 3px 0 0;
+        border-bottom:2px solid;
+    }
+    .strat-header.s1 { background:#0d2010; color:#6aff6a; border-color:#6aff6a; }
+    .strat-header.s2 { background:#241800; color:#ffaa44; border-color:#ffaa44; }
+
+    .section-title {
+        font-size:13px; color:#aab; font-weight:500;
+        margin:0 0 10px 0;
+    }
+
     /* v0.9.1: inline deposit editor */
     .dep-cell { white-space:nowrap; }
     .dep-val { cursor:pointer; border-bottom:1px dashed #446; }
@@ -86,7 +110,6 @@
                 <option value="live"    {{ filter_mode == 'live'    ? 'selected' : '' }}>live</option>
             </select>
         </label>
-        {# v0.9.0-step7 task6: фильтр по аккаунту #}
         <label style="margin-left:14px;">Аккаунт:
             <select name="account" onchange="this.form.submit()">
                 <option value="" {{ filter_account is null ? 'selected' : '' }}>— все —</option>
@@ -144,17 +167,33 @@
     <p style="color:#779;font-size:12px;">Закрытых сделок в режиме <strong>{{ filter_mode }}</strong> пока нет.</p>
     {% endif %}
 
-    {# ── График equity ── #}
-    <div class="chart-card">
-        <h3>Кривая equity (накопленный realized PnL + D0)</h3>
-        {{ equity_svg|raw }}
+    {# ── Переключатель вида ── #}
+    <div class="view-toggle">
+        <button type="button" class="view-btn active" id="btn-view-all">Общее</button>
+        <button type="button" class="view-btn" id="btn-view-compare">s1 vs s2</button>
+    </div>
+
+    {# ── График — ОБЩЕЕ ── #}
+    <div id="chart-section-all" class="chart-card">
+        <h3>Кривая equity — всё (accumulated realized PnL + D0)</h3>
+        {{ equity_svg_all|raw }}
+    </div>
+
+    {# ── График — СРАВНЕНИЕ ── #}
+    <div id="chart-section-compare" class="chart-card" style="display:none;">
+        <h3>Кривые equity: s1 (автомат) vs s2 (ручные)</h3>
+        {{ equity_svg_compare|raw }}
     </div>
 </div>
 
+{# ══════════════════════════════════════════════════════════════════
+   ВИД «ОБЩЕЕ»: По неделям | По месяцам
+══════════════════════════════════════════════════════════════════ #}
+<div id="view-all">
 <div class="stats-grid">
     {# ── По неделям ── #}
     <div class="card">
-        <h3 style="margin:0 0 10px 0;font-size:13px;color:#aab;">По неделям (последние 26)</h3>
+        <h3 class="section-title">По неделям (последние 26)</h3>
         {% if weekly|length > 0 %}
         <table class="stats-table">
             <thead>
@@ -213,7 +252,7 @@
 
     {# ── По месяцам ── #}
     <div class="card">
-        <h3 style="margin:0 0 10px 0;font-size:13px;color:#aab;">По месяцам (последние 24)</h3>
+        <h3 class="section-title">По месяцам (последние 24)</h3>
         {% if monthly|length > 0 %}
         <table class="stats-table">
             <thead>
@@ -270,6 +309,241 @@
         {% endif %}
     </div>
 </div>
+</div>{# /view-all #}
+
+{# ══════════════════════════════════════════════════════════════════
+   ВИД «s1 vs s2»
+══════════════════════════════════════════════════════════════════ #}
+<div id="view-compare" style="display:none;">
+
+    {# ── Итого s1 / s2 ── #}
+    <div class="stats-grid" style="margin-bottom:16px;">
+        <div class="card" style="padding-bottom:12px;">
+            <div class="strat-header s1">s1 — автоматические сделки</div>
+            {% if totals_s1 and totals_s1.trades_count > 0 %}
+            <div class="totals-box" style="margin-top:10px;margin-bottom:0;">
+                <div class="tb-item">
+                    <span class="tb-label">Сделок</span>
+                    <span class="tb-value">{{ totals_s1.trades_count }}</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Win / Loss</span>
+                    <span class="tb-value">
+                        <span class="pnl-pos">{{ totals_s1.wins }}</span> /
+                        <span class="pnl-neg">{{ totals_s1.losses }}</span>
+                    </span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Win rate</span>
+                    {% set wr = totals_s1.win_rate %}
+                    {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                    <span class="tb-value {{ wcls }}">{{ wr|number_format(1) }}%</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Gross profit</span>
+                    <span class="tb-value pnl-pos">+{{ totals_s1.gross_profit|number_format(2) }}</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Gross loss</span>
+                    <span class="tb-value pnl-neg">{{ totals_s1.gross_loss|number_format(2) }}</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Net PnL</span>
+                    <span class="tb-value {{ totals_s1.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                        {{ totals_s1.net_pnl >= 0 ? '+' : '' }}{{ totals_s1.net_pnl|number_format(2) }}
+                    </span>
+                </div>
+            </div>
+            {% else %}
+            <p style="color:#666;font-size:12px;padding:8px 0 0;">Нет данных s1.</p>
+            {% endif %}
+        </div>
+
+        <div class="card" style="padding-bottom:12px;">
+            <div class="strat-header s2">s2 — ручные сделки</div>
+            {% if totals_s2 and totals_s2.trades_count > 0 %}
+            <div class="totals-box" style="margin-top:10px;margin-bottom:0;">
+                <div class="tb-item">
+                    <span class="tb-label">Сделок</span>
+                    <span class="tb-value">{{ totals_s2.trades_count }}</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Win / Loss</span>
+                    <span class="tb-value">
+                        <span class="pnl-pos">{{ totals_s2.wins }}</span> /
+                        <span class="pnl-neg">{{ totals_s2.losses }}</span>
+                    </span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Win rate</span>
+                    {% set wr = totals_s2.win_rate %}
+                    {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                    <span class="tb-value {{ wcls }}">{{ wr|number_format(1) }}%</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Gross profit</span>
+                    <span class="tb-value pnl-pos">+{{ totals_s2.gross_profit|number_format(2) }}</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Gross loss</span>
+                    <span class="tb-value pnl-neg">{{ totals_s2.gross_loss|number_format(2) }}</span>
+                </div>
+                <div class="tb-item">
+                    <span class="tb-label">Net PnL</span>
+                    <span class="tb-value {{ totals_s2.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                        {{ totals_s2.net_pnl >= 0 ? '+' : '' }}{{ totals_s2.net_pnl|number_format(2) }}
+                    </span>
+                </div>
+            </div>
+            {% else %}
+            <p style="color:#666;font-size:12px;padding:8px 0 0;">Нет данных s2.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {# ── По месяцам: s1 | s2 ── #}
+    <div class="stats-grid" style="margin-bottom:16px;">
+        <div class="card">
+            <div class="strat-header s1" style="margin:-14px -14px 10px -14px;padding:6px 14px;">s1 · по месяцам</div>
+            {% if monthly_s1|length > 0 %}
+            <table class="stats-table">
+                <thead>
+                    <tr>
+                        <th>Месяц</th>
+                        <th>Сделок</th>
+                        <th>W/L</th>
+                        <th>WR%</th>
+                        <th>Net PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in monthly_s1 %}
+                    <tr>
+                        <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
+                        <td>{{ r.trades_count }}</td>
+                        <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
+                        {% set wr = r.win_rate %}
+                        {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                        <td class="{{ wcls }}">{{ wr|number_format(1) }}</td>
+                        <td class="{{ r.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                            {{ r.net_pnl >= 0 ? '+' : '' }}{{ r.net_pnl|number_format(2) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="color:#666;font-size:12px;">Нет данных.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <div class="strat-header s2" style="margin:-14px -14px 10px -14px;padding:6px 14px;">s2 · по месяцам</div>
+            {% if monthly_s2|length > 0 %}
+            <table class="stats-table">
+                <thead>
+                    <tr>
+                        <th>Месяц</th>
+                        <th>Сделок</th>
+                        <th>W/L</th>
+                        <th>WR%</th>
+                        <th>Net PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in monthly_s2 %}
+                    <tr>
+                        <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
+                        <td>{{ r.trades_count }}</td>
+                        <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
+                        {% set wr = r.win_rate %}
+                        {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                        <td class="{{ wcls }}">{{ wr|number_format(1) }}</td>
+                        <td class="{{ r.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                            {{ r.net_pnl >= 0 ? '+' : '' }}{{ r.net_pnl|number_format(2) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="color:#666;font-size:12px;">Нет данных.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {# ── По неделям: s1 | s2 ── #}
+    <div class="stats-grid">
+        <div class="card">
+            <div class="strat-header s1" style="margin:-14px -14px 10px -14px;padding:6px 14px;">s1 · по неделям</div>
+            {% if weekly_s1|length > 0 %}
+            <table class="stats-table">
+                <thead>
+                    <tr>
+                        <th>Неделя</th>
+                        <th>Сделок</th>
+                        <th>W/L</th>
+                        <th>WR%</th>
+                        <th>Net PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in weekly_s1 %}
+                    <tr>
+                        <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
+                        <td>{{ r.trades_count }}</td>
+                        <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
+                        {% set wr = r.win_rate %}
+                        {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                        <td class="{{ wcls }}">{{ wr|number_format(1) }}</td>
+                        <td class="{{ r.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                            {{ r.net_pnl >= 0 ? '+' : '' }}{{ r.net_pnl|number_format(2) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="color:#666;font-size:12px;">Нет данных.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <div class="strat-header s2" style="margin:-14px -14px 10px -14px;padding:6px 14px;">s2 · по неделям</div>
+            {% if weekly_s2|length > 0 %}
+            <table class="stats-table">
+                <thead>
+                    <tr>
+                        <th>Неделя</th>
+                        <th>Сделок</th>
+                        <th>W/L</th>
+                        <th>WR%</th>
+                        <th>Net PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in weekly_s2 %}
+                    <tr>
+                        <td>{{ r.period_label is not empty ? r.period_label : r.period }}</td>
+                        <td>{{ r.trades_count }}</td>
+                        <td><span class="pnl-pos">{{ r.wins }}</span>/<span class="pnl-neg">{{ r.losses }}</span></td>
+                        {% set wr = r.win_rate %}
+                        {% set wcls = wr >= 60 ? 'wr-good' : (wr >= 40 ? 'wr-mid' : 'wr-bad') %}
+                        <td class="{{ wcls }}">{{ wr|number_format(1) }}</td>
+                        <td class="{{ r.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg' }}">
+                            {{ r.net_pnl >= 0 ? '+' : '' }}{{ r.net_pnl|number_format(2) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p style="color:#666;font-size:12px;">Нет данных.</p>
+            {% endif %}
+        </div>
+    </div>
+
+</div>{# /view-compare #}
 
 </main>
 <script>
@@ -288,6 +562,44 @@
     function setStatus(msg, color) {
         if (snapStatus) { snapStatus.textContent = msg; snapStatus.style.color = color || '#779'; }
     }
+
+    // ── Переключатель вида ──
+    var btnAll     = document.getElementById('btn-view-all');
+    var btnCompare = document.getElementById('btn-view-compare');
+    var divAll     = document.getElementById('view-all');
+    var divCompare = document.getElementById('view-compare');
+    var chartAll     = document.getElementById('chart-section-all');
+    var chartCompare = document.getElementById('chart-section-compare');
+
+    var VIEW_KEY = 'stats_view_mode';
+
+    function setView(v) {
+        if (v === 'compare') {
+            btnAll.classList.remove('active');
+            btnCompare.classList.add('active');
+            divAll.style.display     = 'none';
+            divCompare.style.display = '';
+            chartAll.style.display     = 'none';
+            chartCompare.style.display = '';
+        } else {
+            btnCompare.classList.remove('active');
+            btnAll.classList.add('active');
+            divCompare.style.display = 'none';
+            divAll.style.display     = '';
+            chartCompare.style.display = 'none';
+            chartAll.style.display     = '';
+        }
+        try { sessionStorage.setItem(VIEW_KEY, v); } catch(e){}
+    }
+
+    // Восстановить последний выбранный вид
+    try {
+        var savedView = sessionStorage.getItem(VIEW_KEY);
+        if (savedView === 'compare') { setView('compare'); }
+    } catch(e){}
+
+    if (btnAll)     { btnAll.addEventListener('click',     function(){ setView('all'); }); }
+    if (btnCompare) { btnCompare.addEventListener('click', function(){ setView('compare'); }); }
 
     // ── Полный пересчёт snapshots ──
     var btnBackfill = document.getElementById('btn-backfill-snapshots');
