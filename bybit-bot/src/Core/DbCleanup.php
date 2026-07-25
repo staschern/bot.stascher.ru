@@ -8,7 +8,7 @@ namespace BybitBot\Core;
  *
  * Политика хранения:
  *   api_calls          — 14 дней  (логи каждого API-вызова, самый тяжёлый рост)
- *   events             — 90 дней  (глобальные события; вкладка «События»)
+ *   events             — 14 дней  (глобальные события; вкладка «События»)
  *   cron_runs          — 60 дней  (anti-rerun guard; старые строки бесполезны)
  *   trade_events       — 90 дней  для ЗАКРЫТЫХ/CANCELLED сделок
  *                        (для открытых — хранятся бессрочно, их мало)
@@ -38,7 +38,7 @@ final class DbCleanup
 
         $cuts = [
             'api_calls'          => '-14 days',
-            'events'             => '-90 days',
+            'events'             => '-14 days',
             'cron_runs'          => '-60 days',
             'bybit_health_pings' => '-7 days',
             'auth_attempts'      => '-7 days',
@@ -85,19 +85,20 @@ final class DbCleanup
             $deleted['trade_events'] = -1;
         }
 
-        // VACUUM — возвращает страницы SQLite в файловую систему.
-        // Выполняем всегда: на пустой/маленькой БД занимает < 1 с,
-        // на большой — несколько секунд. В cron_daily это допустимо.
+        // VACUUM — только если реально что-то удалено (иначе на большой БД блокирует
+        // базу на несколько секунд без пользы, что роняет event_recorder из соседних процессов).
+        $totalDeleted = array_sum(array_filter($deleted, fn($v) => $v > 0));
         $vacuum = false;
-        try {
-            $pdo->exec('VACUUM');
-            $vacuum = true;
-        } catch (\Throwable $e) {
-            Logger::get()->warning('DbCleanup: VACUUM failed: ' . $e->getMessage());
-            $error = 'vacuum: ' . $e->getMessage();
+        if ($totalDeleted > 0) {
+            try {
+                $pdo->exec('VACUUM');
+                $vacuum = true;
+            } catch (\Throwable $e) {
+                Logger::get()->warning('DbCleanup: VACUUM failed: ' . $e->getMessage());
+                $error = 'vacuum: ' . $e->getMessage();
+            }
         }
 
-        $totalDeleted = array_sum(array_filter($deleted, fn($v) => $v > 0));
         Logger::get()->info('DbCleanup: done', array_merge($deleted, [
             'vacuum'  => $vacuum,
             'total'   => $totalDeleted,
