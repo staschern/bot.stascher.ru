@@ -1,0 +1,113 @@
+{
+  "note": "Calibrated synthetic GBM data anchored to known BTC price history",
+  "period": "2022-01-01 \u2014 2025-07-01",
+  "candles": 30648,
+  "fee_per_side_pct": 0.075,
+  "leverage": 1,
+  "results": [
+    {
+      "strategy": "BUY & HOLD (benchmark)",
+      "n_trades": 1,
+      "win_rate": 100,
+      "avg_win": 190.1,
+      "avg_loss": 0,
+      "profit_factor": 999,
+      "total_ret": 190.1,
+      "monthly_ret": 2.57,
+      "cagr": 35.7,
+      "max_dd": -94.2,
+      "sharpe": "\u2014"
+    },
+    {
+      "strategy": "S4: RSI Mean Reversion (30/70)",
+      "n_trades": 104,
+      "win_rate": 64.4,
+      "avg_win": 9.28,
+      "avg_loss": -10.98,
+      "profit_factor": 1.53,
+      "total_ret": 82.9,
+      "monthly_ret": 1.45,
+      "cagr": 18.9,
+      "max_dd": -88.7,
+      "sharpe": 0.56
+    },
+    {
+      "strategy": "S2: EMA 21/55 + RSI Filter",
+      "n_trades": 281,
+      "win_rate": 33.1,
+      "avg_win": 6.71,
+      "avg_loss": -2.86,
+      "profit_factor": 1.16,
+      "total_ret": 23.9,
+      "monthly_ret": 0.51,
+      "cagr": 6.3,
+      "max_dd": -66.5,
+      "sharpe": 0.4
+    },
+    {
+      "strategy": "S6: Triple EMA + ATR (8/21/55)",
+      "n_trades": 264,
+      "win_rate": 33.7,
+      "avg_win": 7.22,
+      "avg_loss": -3.28,
+      "profit_factor": 1.12,
+      "total_ret": -3.3,
+      "monthly_ret": -0.08,
+      "cagr": -1.0,
+      "max_dd": -71.8,
+      "sharpe": 0.32
+    },
+    {
+      "strategy": "S1: EMA 50/200 Crossover",
+      "n_trades": 84,
+      "win_rate": 31.0,
+      "avg_win": 11.77,
+      "avg_loss": -5.3,
+      "profit_factor": 1.0,
+      "total_ret": -41.4,
+      "monthly_ret": -1.27,
+      "cagr": -14.2,
+      "max_dd": -78.2,
+      "sharpe": 0.1
+    },
+    {
+      "strategy": "S7: Weekly High Breakout + EMA200",
+      "n_trades": 84,
+      "win_rate": 31.0,
+      "avg_win": 5.53,
+      "avg_loss": -3.68,
+      "profit_factor": 0.67,
+      "total_ret": -57.4,
+      "monthly_ret": -2.01,
+      "cagr": -21.6,
+      "max_dd": -71.0,
+      "sharpe": -0.67
+    },
+    {
+      "strategy": "S5: Bollinger Bands Breakout (20h,2\u03c3)",
+      "n_trades": 556,
+      "win_rate": 32.9,
+      "avg_win": 3.54,
+      "avg_loss": -1.89,
+      "profit_factor": 0.92,
+      "total_ret": -63.1,
+      "monthly_ret": -2.35,
+      "cagr": -24.8,
+      "max_dd": -81.7,
+      "sharpe": -0.32
+    },
+    {
+      "strategy": "S3: MACD (12/26/9)",
+      "n_trades": 1253,
+      "win_rate": 36.5,
+      "avg_win": 2.85,
+      "avg_loss": -1.78,
+      "profit_factor": 0.92,
+      "total_ret": -86.2,
+      "monthly_ret": -4.61,
+      "cagr": -43.3,
+      "max_dd": -95.7,
+      "sharpe": -0.5
+    }
+  ]
+}
